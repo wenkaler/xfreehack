@@ -12,6 +12,7 @@ RUN CGO_ENABLED=1 go build \
 # copy to alpine image
 FROM alpine:3.8
 WORKDIR /app
+RUN mkdir /db
 COPY --from=build /out/xfree /app
 RUN apk add --no-cache tzdata
 RUN apk --no-cache add ca-certificates
