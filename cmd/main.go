@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 
+	"github.com/wenkaler/xfreehack/storage"
+
 	"github.com/kelseyhightower/envconfig"
 	"github.com/wenkaler/xfreehack/collector"
 
@@ -14,8 +16,10 @@ import (
 )
 
 type configure struct {
-	ServiceName string `envconfig:"service_name"`
-	Port        string `envconfig:"port"`
+	ServiceName  string   `envconfig:"service_name" default:"xFreeService"`
+	PathDB       string   `envconfig:"path_db" default:"xfree.db"`
+	MarketPlaces []string `envconfig:"market_places" default:"ЛитРес"`
+	URL          string   `envconfig:"url" default:"https://halyavshiki.com/"`
 }
 
 var serviceVersion = "dev"
@@ -39,12 +43,16 @@ func main() {
 		level.Error(logger).Log("msg", "failed to load configuration", "err", err)
 		os.Exit(1)
 	}
-
+	s, err := storage.New(cfg.PathDB, logger)
+	if err != nil {
+		level.Error(logger).Log("msg", "failed create storage", "err", err)
+		os.Exit(1)
+	}
 	c, err := collector.New(&collector.Config{
 		Logger:      logger,
-		Storage:     nil,
-		URL:         "https://halyavshiki.com/",
-		NameMarkets: []string{"ЛитРес"},
+		Storage:     s,
+		URL:         cfg.URL,
+		NameMarkets: cfg.MarketPlaces,
 	})
 	if err != nil {
 		level.Error(logger).Log("msg", "failed create collectore", "err", err)

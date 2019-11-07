@@ -1,11 +1,11 @@
 package collector
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/go-kit/kit/log/level"
 
@@ -21,8 +21,8 @@ type Config struct {
 }
 
 type Storage interface {
-	GetRecordsByName(token, name string) ([]byte, error)
-	Collect(records []Record) error
+	//GetRecordsByName(token, name string) ([]byte, error)
+	Collect(records Record) error
 }
 
 type Collector struct {
@@ -38,9 +38,9 @@ type Record struct {
 }
 
 func New(cfg *Config) (*Collector, error) {
-	//if cfg.Storage == nil {
-	//	return nil, errors.New("storage is empty")
-	//}
+	if cfg.Storage == nil {
+		return nil, errors.New("storage is empty")
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = log.NewNopLogger()
 	}
@@ -50,31 +50,33 @@ func New(cfg *Config) (*Collector, error) {
 	collector := &Collector{
 		cfg: cfg,
 	}
+	level.Info(cfg.Logger).Log("msg", "create collector.")
 	return collector, nil
 }
 
-func (c *Collector) GetRecord(token, brand string) ([]Record, error) {
-	if token == "" {
-		return nil, fmt.Errorf("token is empty")
-	}
-	if brand == "" {
-		return nil, fmt.Errorf("name is empty")
-	}
-
-	b, err := c.cfg.Storage.GetRecordsByName(token, brand)
-	if err != nil {
-		return nil, fmt.Errorf("failed get record from data base: %v", err)
-	}
-	var resp []Record
-	err = json.Unmarshal(b, &resp)
-	if err != nil {
-		return nil, fmt.Errorf("failed unmarshal struct record: %v", err)
-	}
-	return resp, nil
-}
+//func (c *Collector) GetRecord(token, brand string) ([]Record, error) {
+//	if token == "" {
+//		return nil, fmt.Errorf("token is empty")
+//	}
+//	if brand == "" {
+//		return nil, fmt.Errorf("name is empty")
+//	}
+//
+//	b, err := c.cfg.Storage.GetRecordsByName(token, brand)
+//	if err != nil {
+//		return nil, fmt.Errorf("failed get record from data base: %v", err)
+//	}
+//	var resp []Record
+//	err = json.Unmarshal(b, &resp)
+//	if err != nil {
+//		return nil, fmt.Errorf("failed unmarshal struct record: %v", err)
+//	}
+//	return resp, nil
+//}
 
 func (c *Collector) Collect() error {
-	var records []Record
+	begin := time.Now()
+	level.Info(c.cfg.Logger).Log("msg", "collect records was start")
 	resp, err := http.Get(c.cfg.URL)
 	if err != nil {
 		return fmt.Errorf("failed get request url: %s, reason: %v", c.cfg.URL, err)
@@ -93,12 +95,12 @@ func (c *Collector) Collect() error {
 			r.PostID = postID
 			s.Find("a").Each(func(i int, s *goquery.Selection) {
 				for _, name := range c.cfg.NameMarkets {
-					b, err := regexp.MatchString(name, s.Text())
+					existMarket, err := regexp.MatchString(name, s.Text())
 					if err != nil {
 						level.Error(c.cfg.Logger).Log("msg", "failed regexp", "err", err)
 						continue
 					}
-					if b {
+					if existMarket {
 						r.Market = name
 						link, exist := s.Attr("href")
 						if !exist {
@@ -121,15 +123,18 @@ func (c *Collector) Collect() error {
 							level.Error(c.cfg.Logger).Log("msg", "failed create newDocument", "err", err)
 						}
 						doc.Find("b").Each(func(i int, s *goquery.Selection) {
-							b, err := regexp.MatchString(name, s.Text())
+							marketFound, err := regexp.MatchString(name, s.Text())
 							if err != nil {
 								level.Error(c.cfg.Logger).Log("msg", "failed regexp", "err", err)
 							}
-							if b {
+							if marketFound {
 								s = s.Parent()
 								r.Link = "http://" + s.Find("a").Text()
 								r.Code = s.Find("code").Text()
-								records = append(records, r)
+								err = c.cfg.Storage.Collect(r)
+								if err != nil {
+									level.Error(c.cfg.Logger).Log("msg", "failed collect record", "err", err)
+								}
 							}
 						})
 					}
@@ -137,9 +142,6 @@ func (c *Collector) Collect() error {
 			})
 		}
 	})
-	err = c.cfg.Storage.Collect(records)
-	if err != nil {
-		return fmt.Errorf("failed collect all records: %v", err)
-	}
+	level.Info(c.cfg.Logger).Log("msg", "collect records was finished", "time elapsed", time.Since(begin))
 	return nil
 }
