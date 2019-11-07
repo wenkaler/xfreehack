@@ -22,7 +22,7 @@ import (
 
 type configure struct {
 	ServiceName  string   `envconfig:"service_name" default:"xFreeService"`
-	PathDB       string   `envconfig:"path_db" default:"xfree.db"`
+	PathDB       string   `envconfig:"path_db" default:"/xfreehack-db/xfree.db"`
 	MarketPlaces []string `envconfig:"market_places" default:"ЛитРес"`
 	URL          string   `envconfig:"url" default:"https://halyavshiki.com/"`
 
@@ -142,6 +142,7 @@ func main() {
 	}
 	c.Collect()
 	gocron.Every(1).Days().At("20:00").Do(task, bot, s, c)
+	gocron.Start()
 	cl := make(chan os.Signal, 1)
 	signal.Notify(cl, syscall.SIGTERM, syscall.SIGINT)
 	sig := <-cl
@@ -167,14 +168,16 @@ func task(bot *tgbotapi.BotAPI, s *storage.Storage, c *collector.Collector) {
 		for _, rec := range records {
 			msg = fmt.Sprintf("%v\n%s - %s - %s", msg, rec.Market, rec.Link, rec.Code)
 		}
-		m := tgbotapi.NewMessage(id, msg)
-		_, err = bot.Send(m)
-		if err != nil {
-			log.Printf("failed send message: %v", err)
-		}
-		err = s.MarkAsRead(id, records)
-		if err != nil {
-			log.Printf("failed marked as read: %v", err)
+		if msg != "" {
+			m := tgbotapi.NewMessage(id, msg)
+			_, err = bot.Send(m)
+			if err != nil {
+				log.Printf("failed send message: %v", err)
+			}
+			err = s.MarkAsRead(id, records)
+			if err != nil {
+				log.Printf("failed marked as read: %v", err)
+			}
 		}
 	}
 }
