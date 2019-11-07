@@ -14,6 +14,7 @@ FROM alpine:3.8
 WORKDIR /app
 COPY --from=build /out/xfree /app
 RUN apk add --no-cache tzdata
+RUN apk --no-cache add ca-certificates
 ENV TZ Europe/Moscow
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 CMD ["/app/xfree"]
