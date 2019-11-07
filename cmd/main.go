@@ -77,7 +77,7 @@ func main() {
 			if u.Message == nil {
 				continue
 			}
-			if u.Message.Command() == "/start" {
+			if u.Message.Command() == "start" {
 				fmt.Println(u.Message.From.String())
 				err := s.NewChat(u.Message.Chat.ID)
 				if err != nil {
@@ -86,7 +86,7 @@ func main() {
 				}
 				m := tgbotapi.NewMessage(u.Message.Chat.ID, `Введите команду для приемлимой конфигурации бота. 
 /only_new - для получения только новыйх купонов
-/all - для получения всех купонов
+/all - для получения всех купонов которые есть в базе
 После конфигураци вы будете автоматически получать купон(ы) в 20:00 по МСК`)
 				_, err = bot.Send(m)
 				if err != nil {
@@ -94,7 +94,7 @@ func main() {
 					continue
 				}
 			}
-			if u.Message.Command() == "/only_new" {
+			if u.Message.Command() == "only_new" {
 				records, err := s.GetNotUseCoupon(u.Message.Chat.ID)
 				if err != nil {
 					log.Printf("failed get coupons: %v", err)
@@ -106,7 +106,7 @@ func main() {
 					log.Printf("failed marked as read: %v", err)
 				}
 			}
-			if u.Message.Command() == "/all" {
+			if u.Message.Command() == "all" {
 				records, err := s.GetNotUseCoupon(u.Message.Chat.ID)
 				if err != nil {
 					log.Printf("failed get coupons: %v", err)
@@ -139,6 +139,7 @@ func main() {
 		level.Error(logger).Log("msg", "failed create collectore", "err", err)
 		os.Exit(1)
 	}
+	c.Collect()
 	gocron.Every(1).Days().At("20:00").Do(task, bot, s, c)
 	cl := make(chan os.Signal, 1)
 	signal.Notify(cl, syscall.SIGTERM, syscall.SIGINT)

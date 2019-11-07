@@ -90,6 +90,11 @@ func (s *Storage) init() error {
 	if err != nil {
 		return fmt.Errorf("failed create messages table: %v", err)
 	}
+
+	_, err = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS  rcr ON relation_chat_records(id_record, id_chat)`)
+	if err != nil {
+		return fmt.Errorf("failed create index table: %v", err)
+	}
 	level.Info(s.logger).Log("msg", "create data base, with table.")
 	return nil
 }
@@ -101,7 +106,7 @@ func (s *Storage) NewChat(cid int64) error {
 
 func (s *Storage) GetNotUseCoupon(cid int64) ([]collector.Record, error) {
 	var rr []collector.Record
-	err := s.db.Unsafe().Select(&rr, `SELECT rec.* FROM relation_chat_records AS rel WHERE id_chat = ? AND status = false INNER JOIN records AS rec ON rel.id_record = rec.id`, cid)
+	err := s.db.Unsafe().Select(&rr, `select records.* from records LEFT OUTER JOIN (SELECT * FROM relation_chat_records as rcr where rcr.id_chat = ?)  rcr on records.id = rcr.id_record where rcr.status = false or rcr.id_record is null ;`, cid)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +115,7 @@ func (s *Storage) GetNotUseCoupon(cid int64) ([]collector.Record, error) {
 
 func (s *Storage) MarkAsRead(cid int64, rr []collector.Record) error {
 	for _, r := range rr {
-		_, err := s.db.Unsafe().Exec(`UPDATE TABLE relation_chat_records SET status = true WHERE id_record = ? and id_chat = ?`, r.ID, cid)
+		_, err := s.db.Unsafe().Exec(`INSERT INTO relation_chat_records (id_record, id_chat, status) VALUES(?, ?, ?) ON CONFLICT(id_chat, id_record) DO UPDATE SET status = EXCLUDED.status`, r.ID, cid, true)
 		if err != nil {
 			return err
 		}
