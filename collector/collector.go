@@ -120,7 +120,9 @@ func (c *Collector) Collect() error {
 								if marketFound {
 									s = s.Parent()
 									r.Link = "http://" + s.Find("a").Text()
-									r.Code = s.Find("code").Text()
+									s.Find("code").Each(func(i int, selection *goquery.Selection) {
+										r.Code += fmt.Sprintf("%v: %v\t", i+1, selection.Text())
+									})
 									err = c.cfg.Storage.Collect(r)
 									if err != nil {
 										level.Error(c.cfg.Logger).Log("msg", "failed collect record", "err", err)
