@@ -166,7 +166,7 @@ func task(bot *tgbotapi.BotAPI, s *storage.Storage, c *collector.Collector) {
 		}
 		var msg string
 		for _, rec := range records {
-			msg += fmt.Sprintf("%v\n%s - %s - %s", msg, rec.Market, rec.Link, rec.Code)
+			msg += fmt.Sprintf("%s - %s - %s\n", rec.Market, rec.Link, rec.Code)
 		}
 		if msg != "" {
 			m := tgbotapi.NewMessage(id, msg)
