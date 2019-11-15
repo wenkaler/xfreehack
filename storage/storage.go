@@ -53,52 +53,6 @@ func (s *Storage) LoadCollect() (map[string]collector.Record, error) {
 	return m, nil
 }
 
-func (s *Storage) init() error {
-	_, err := s.db.Unsafe().Exec(`CREATE TABLE  IF NOT EXISTS records(
-									id INTEGER PRIMARY KEY AUTOINCREMENT,
-									post_id VARCHAR(40) NOT NULL UNIQUE,
-									market VARCHAR(40) NOT NULL,
-									link VARCHAR(225) NOT NULL,
-									code VARCHAR(100) NOT NULL
-						)`)
-	if err != nil {
-		return fmt.Errorf("failed create records table: %v", err)
-	}
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS chats(
-									id INTEGER PRIMARY KEY UNIQUE
-						)`)
-	if err != nil {
-		return fmt.Errorf("failed create chats table: %v", err)
-	}
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS messages(
-									id INTEGER PRIMARY KEY AUTOINCREMENT,
-									chat_id INTEGER NOT NULL,
-									message TEXT NOT NULL,
-									FOREIGN KEY (chat_id) REFERENCES chats(id)
-						)`)
-	if err != nil {
-		return fmt.Errorf("failed create messages table: %v", err)
-	}
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS relation_chat_records(
-									id INTEGER PRIMARY KEY AUTOINCREMENT,
-									id_record INTEGER NOT NULL,
-									id_chat INTEGER NOT NULL,
-									status BOOLEAN DEFAULT FALSE ,
-									FOREIGN KEY (id_chat) REFERENCES chats(id),
-									FOREIGN KEY (id_record) REFERENCES records(id)
-						)`)
-	if err != nil {
-		return fmt.Errorf("failed create messages table: %v", err)
-	}
-
-	_, err = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS  rcr ON relation_chat_records(id_record, id_chat)`)
-	if err != nil {
-		return fmt.Errorf("failed create index table: %v", err)
-	}
-	level.Info(s.logger).Log("msg", "create data base, with table.")
-	return nil
-}
-
 func (s *Storage) NewChat(cid int64) error {
 	_, err := s.db.Unsafe().Exec(`INSERT INTO chats(id) VALUES(?)`, cid)
 	return err
@@ -130,4 +84,67 @@ func (s *Storage) GetChat() (a []int64, err error) {
 
 func (s *Storage) Close() error {
 	return s.db.Close()
+}
+
+func (s *Storage) init() error {
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS markets(
+									id INTEGER PRIMARY KEY AUTOINCREMENT,
+									name VARCHAR(100) NOT NULL
+						)`)
+	if err != nil {
+		return fmt.Errorf("failed create markets table: %v", err)
+	}
+	_, err = s.db.Unsafe().Exec(`CREATE TABLE  IF NOT EXISTS records(
+									id INTEGER PRIMARY KEY AUTOINCREMENT,
+									id_market INTEGER NOT NULL,
+									post_id VARCHAR(40) NOT NULL,
+									link VARCHAR(225) NOT NULL,
+									code VARCHAR(100) NOT NULL UNIQUE,
+									description TEXT NOT NULL,
+									'date' BIGINT NOT NULL,
+									FOREIGN KEY (id_market) REFERENCES markets(id)
+						)`)
+	if err != nil {
+		return fmt.Errorf("failed create records table: %v", err)
+	}
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS chats(
+									id INTEGER PRIMARY KEY UNIQUE,
+									'type' VARCHAR(225) NOT NULL,
+									user_name VARCHAR(100) NULL,
+									first_name VARCHAR(100) NULL,
+									last_name VARCHAR(100) NULL,
+									title VARCHAR(225) NULL,
+									description TEXT NULL,
+									invite_link VARCHAR(225) NULL
+						)`)
+	if err != nil {
+		return fmt.Errorf("failed create chats table: %v", err)
+	}
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS messages(
+									id INTEGER PRIMARY KEY UNIQUE,
+									chat_id INTEGER NOT NULL,
+									message TEXT NOT NULL,
+									FOREIGN KEY (chat_id) REFERENCES chats(id)
+						)`)
+	if err != nil {
+		return fmt.Errorf("failed create messages table: %v", err)
+	}
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS relation_chat_records(
+									id INTEGER PRIMARY KEY AUTOINCREMENT,
+									id_record INTEGER NOT NULL,
+									id_chat INTEGER NOT NULL,
+									status BOOLEAN DEFAULT FALSE ,
+									FOREIGN KEY (id_chat) REFERENCES chats(id),
+									FOREIGN KEY (id_record) REFERENCES records(id)
+						)`)
+	if err != nil {
+		return fmt.Errorf("failed create messages table: %v", err)
+	}
+
+	_, err = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS  rcr ON relation_chat_records(id_record, id_chat)`)
+	if err != nil {
+		return fmt.Errorf("failed create index table: %v", err)
+	}
+	level.Info(s.logger).Log("msg", "create data base, with table.")
+	return nil
 }

@@ -11,7 +11,6 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/go-kit/kit/log"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 )
 
 var Collection = make(map[string]Record)
@@ -19,8 +18,7 @@ var Collection = make(map[string]Record)
 type Config struct {
 	Logger      log.Logger
 	Storage     Storage
-	Bot         *tgbotapi.BotAPI
-	URL         string
+	URLs        []string
 	NameMarkets []string
 }
 
@@ -49,8 +47,8 @@ func New(cfg *Config) (*Collector, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = log.NewNopLogger()
 	}
-	if cfg.URL == "" {
-		return nil, errors.New("URL is empty")
+	if len(cfg.URLs) == 0 {
+		return nil, errors.New("URLs must provide at least one url")
 	}
 	collector := &Collector{
 		cfg: cfg,
@@ -63,7 +61,46 @@ func New(cfg *Config) (*Collector, error) {
 	return collector, nil
 }
 
-func (c *Collector) Collect() error {
+type Filter struct {
+	URL         string
+	Deep        int
+	PostID      *Attribute
+	Code        *Attribute
+	Description *Attribute
+	Date        *Attribute
+}
+
+type Attribute struct {
+	Deep    int
+	Article string
+	Attr    string
+	Regexp  string
+}
+
+type Rec struct {
+	Code        string
+	Date        string
+	PostID      string
+	Description string
+}
+
+func (c *Collector) dima(d *goquery.Document, f *Filter) error {
+	if c := f.Code; c.Deep == f.Deep {
+		d.Find(c.Article).Each(func(i int, selection *goquery.Selection) {
+
+		})
+	}
+	if dsc := f.Description; dsc != nil && dsc.Deep == f.Deep {
+		str := regexp.MustCompile(dsc.Regexp).FindAllString(d.Find(dsc.Article).Text(), -1)
+		fmt.Println("Description", str) // ЛитРес.{1,100}:
+	}
+	if f.Date != nil && f.Date.Deep == f.Deep {
+
+	}
+	return nil
+}
+
+func (c *Collector) Collector() error {
 	begin := time.Now()
 	level.Info(c.cfg.Logger).Log("msg", "collect records was start")
 	resp, err := http.Get(c.cfg.URL)
