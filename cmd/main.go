@@ -76,7 +76,7 @@ func main() {
 		level.Error(logger).Log("msg", "failed create collectore", "err", err)
 		os.Exit(1)
 	}
-	sn.Run()
+	go sn.Run()
 	c.Collect(collector.ConditionQuery{
 		URI: "https://lovikod.ru/knigi/promokody-litres",
 	})
