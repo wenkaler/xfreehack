@@ -2,6 +2,9 @@ package storage
 
 import (
 	"fmt"
+	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 
 	"github.com/go-kit/kit/log/level"
 
@@ -36,7 +39,7 @@ func New(pathDB string, logger log.Logger) (*Storage, error) {
 }
 
 func (s *Storage) Collect(record collector.Record) error {
-	_, err := s.db.Exec(`INSERT INTO records(post_id, market, link, code) VALUES(?,?,?,?)`, record.PostID, record.Market, record.Link, record.Code)
+	_, err := s.db.Exec(`INSERT INTO records(post_id, link, code, description, date) VALUES(?,?,?,?,?) ON CONFLICT(link) DO NOTHING`, record.PostID, record.Link, record.Code, record.Description, record.Date)
 	return err
 }
 
@@ -53,14 +56,20 @@ func (s *Storage) LoadCollect() (map[string]collector.Record, error) {
 	return m, nil
 }
 
-func (s *Storage) NewChat(cid int64) error {
-	_, err := s.db.Unsafe().Exec(`INSERT INTO chats(id) VALUES(?)`, cid)
+func (s *Storage) NewChat(chat *tgbotapi.Chat) error {
+	_, err := s.db.Unsafe().Exec(`INSERT INTO chats(id, type, user_name, first_name, last_name ) VALUES(?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, chat.ID, chat.Type, chat.UserName, chat.FirstName, chat.LastName)
+	return err
+}
+
+func (s *Storage) NewMessage(msg *tgbotapi.Message) error {
+	_, err := s.db.Unsafe().Exec(`INSERT INTO main.messages(id, id_chat, message) VALUES(?, ?, ?) ON CONFLICT(id) DO NOTHING`, msg.MessageID, msg.Chat.ID, msg.Text)
 	return err
 }
 
 func (s *Storage) GetNotUseCoupon(cid int64) ([]collector.Record, error) {
 	var rr []collector.Record
-	err := s.db.Unsafe().Select(&rr, `select records.* from records LEFT OUTER JOIN (SELECT * FROM relation_chat_records as rcr where rcr.id_chat = ?)  rcr on records.id = rcr.id_record where rcr.status = false or rcr.id_record is null ;`, cid)
+	var t = time.Now().Unix()
+	err := s.db.Unsafe().Select(&rr, `select records.* from records LEFT OUTER JOIN (SELECT * FROM relation_chat_records as rcr where rcr.id_chat = ?)  rcr on records.id = rcr.id_record where rcr.status = 0 and records.date = ? or rcr.id_record is null and records.date > ? limit 5`, cid, t, t)
 	if err != nil {
 		return nil, err
 	}
@@ -87,22 +96,13 @@ func (s *Storage) Close() error {
 }
 
 func (s *Storage) init() error {
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS markets(
+	_, err := s.db.Unsafe().Exec(`CREATE TABLE  IF NOT EXISTS records(
 									id INTEGER PRIMARY KEY AUTOINCREMENT,
-									name VARCHAR(100) NOT NULL
-						)`)
-	if err != nil {
-		return fmt.Errorf("failed create markets table: %v", err)
-	}
-	_, err = s.db.Unsafe().Exec(`CREATE TABLE  IF NOT EXISTS records(
-									id INTEGER PRIMARY KEY AUTOINCREMENT,
-									id_market INTEGER NOT NULL,
 									post_id VARCHAR(40) NOT NULL,
-									link VARCHAR(225) NOT NULL,
-									code VARCHAR(100) NOT NULL UNIQUE,
+									link VARCHAR(225) NOT NULL UNIQUE,
+									code VARCHAR(100) NOT NULL,
 									description TEXT NOT NULL,
-									'date' BIGINT NOT NULL,
-									FOREIGN KEY (id_market) REFERENCES markets(id)
+									'date' BIGINT NOT NULL
 						)`)
 	if err != nil {
 		return fmt.Errorf("failed create records table: %v", err)
@@ -112,19 +112,16 @@ func (s *Storage) init() error {
 									'type' VARCHAR(225) NOT NULL,
 									user_name VARCHAR(100) NULL,
 									first_name VARCHAR(100) NULL,
-									last_name VARCHAR(100) NULL,
-									title VARCHAR(225) NULL,
-									description TEXT NULL,
-									invite_link VARCHAR(225) NULL
+									last_name VARCHAR(100) NULL
 						)`)
 	if err != nil {
 		return fmt.Errorf("failed create chats table: %v", err)
 	}
 	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS messages(
 									id INTEGER PRIMARY KEY UNIQUE,
-									chat_id INTEGER NOT NULL,
+									id_chat INTEGER NOT NULL,
 									message TEXT NOT NULL,
-									FOREIGN KEY (chat_id) REFERENCES chats(id)
+									FOREIGN KEY (id_chat) REFERENCES chats(id)
 						)`)
 	if err != nil {
 		return fmt.Errorf("failed create messages table: %v", err)
