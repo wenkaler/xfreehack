@@ -75,7 +75,7 @@ func (s *SNBot) read(message *tgbotapi.Message) error {
 			return fmt.Errorf("failed get coupons: %v", err)
 		}
 		for i, rec := range records {
-			msg = fmt.Sprintf("%v%v:\t%s \nКод--->: %s\nВремя истечения:%v\nОписание: %s\n\n", msg, i+1, rec.Link, rec.Code, time.Unix(rec.Date, 0).Format("02.01.2006"), rec.Description)
+			msg = fmt.Sprintf("%v%v:\t%s \nКод--->: %s\nВремя истечения: %v\nОписание: %s\n\n", msg, i+1, rec.Link, rec.Code, time.Unix(rec.Date, 0).Format("02.01.2006"), rec.Description)
 		}
 		if len(msg) == 0 {
 			msg = `Вы получили все доступные купоны на данный момент.`

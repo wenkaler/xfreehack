@@ -23,7 +23,7 @@ import (
 
 type configure struct {
 	ServiceName string `envconfig:"service_name" default:"xFreeService"`
-	PathDB      string `envconfig:"path_db" default:"/xfreehack-db/xfree.db"`
+	PathDB      string `envconfig:"path_db" default:"test.db"`
 	Telegram    struct {
 		Token      string `envconfig:"telegram_token" required:"true"`
 		UpdateTime int    `envconfig:"telegram_update_bot" default:"60"`
