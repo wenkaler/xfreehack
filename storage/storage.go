@@ -87,7 +87,7 @@ func (s *Storage) MarkAsRead(cid int64, rr []collector.Record) error {
 }
 
 func (s *Storage) GetChat() (a []int64, err error) {
-	err = s.db.Unsafe().Select(&a, `SELECT * FROM chats`)
+	err = s.db.Unsafe().Select(&a, `SELECT id FROM chats`)
 	return
 }
 

@@ -111,6 +111,7 @@ func (s *SNBot) Run() {
 }
 
 func (s *SNBot) Send(chatID int64, msg string) error {
+	level.Error(s.cfg.Logger).Log("msg", "try send", "chatID", chatID)
 	var numericKeyboard = tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("/print5"),

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/wenkaler/xfreehack/snbot"
 
@@ -80,7 +81,7 @@ func main() {
 	c.Collect(collector.ConditionQuery{
 		URI: "https://lovikod.ru/knigi/promokody-litres",
 	})
-	gocron.Every(1).Days().At("20:00").Do(task, sn, s, c)
+	gocron.Every(1).Days().At("20:00").Do(task, sn, s, c, logger)
 	gocron.Start()
 
 	cl := make(chan os.Signal, 1)
@@ -99,7 +100,7 @@ func task(bot *snbot.SNBot, s *storage.Storage, c *collector.Collector, logger k
 	})
 	chats, err := s.GetChat()
 	if err != nil {
-		log.Println("failed get chats")
+		level.Error(logger).Log("msg", "failed get chats", "err", err)
 	}
 	for _, id := range chats {
 		records, err := s.GetNotUseCoupon(id)
@@ -108,20 +109,22 @@ func task(bot *snbot.SNBot, s *storage.Storage, c *collector.Collector, logger k
 			return
 		}
 		var msg string
-		for _, rec := range records {
-			msg += fmt.Sprintf("%s - %s \n", rec.Link, rec.Code)
+		for i, rec := range records {
+			msg = fmt.Sprintf("%v%v:\t%s \nКод--->: %s\nВремя истечения: %v\nОписание: %s\n\n", msg, i+1, rec.Link, rec.Code, time.Unix(rec.Date, 0).Format("02.01.2006"), rec.Description)
 		}
-		if msg != "" {
-			err := bot.Send(id, msg)
-			if err != nil {
-				level.Error(logger).Log("msg", "failed send message", "err", err)
-				continue
-			}
-			err = s.MarkAsRead(id, records)
-			if err != nil {
-				level.Error(logger).Log("msg", "failed marked as read", "err", err)
-				continue
-			}
+		if len(msg) == 0 {
+			msg = `Вы получили все доступные купоны на данный момент.`
+		}
+		err = bot.Send(id, msg)
+		if err != nil {
+			level.Error(logger).Log("msg", "failed send message", "err", err)
+			continue
+		}
+		err = s.MarkAsRead(id, records)
+		if err != nil {
+			level.Error(logger).Log("msg", "failed marked as read", "err", err)
+			continue
 		}
 	}
+	level.Info(logger).Log("msg", "send all chats new coupons")
 }
