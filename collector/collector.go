@@ -29,6 +29,12 @@ type Collector struct {
 	cfg *Config
 }
 
+const (
+	date = iota
+	code
+	description
+)
+
 func New(cfg *Config) (*Collector, error) {
 	if cfg.Storage == nil {
 		return nil, errors.New("storage is empty")
@@ -57,25 +63,26 @@ func (c *Collector) collect(d *goquery.Document) {
 		if i == 0 {
 			selection.Find("tr").Each(func(i int, selection *goquery.Selection) {
 				var r Record
-				selection.Find("td").Each(func(i int, s *goquery.Selection) {
-					switch i {
-					case 0:
+				selection.Find("td").Each(func(column int, s *goquery.Selection) {
+					switch column {
+					case date:
 						var t time.Time
 						var err error
 						sep := strings.Split(s.Text(), " ")
-						if sep[0] == "до" {
+						if strings.EqualFold(sep[0], "до") {
 							t, err = time.Parse("02.01.2006", sep[1])
 							if err != nil {
 								level.Error(c.cfg.Logger).Log("msg", "failed parse time", "time", s.Text(), "err", err)
 							}
 						} else {
-							t, err = time.Parse("2 January 2006", "30 "+month[sep[0]]+" "+sep[1])
+							t1 := time.Date(time.Now().Year(), time.Now().Month()+1, 0, 0, 0, 0, 0, time.Local)
+							t, err = time.Parse("2 January 2006", fmt.Sprintf("%d %s %s", t1.Day(), month[sep[0]], sep[1]))
 							if err != nil {
 								level.Error(c.cfg.Logger).Log("msg", "failed parse time", "time", s.Text(), "err", err)
 							}
 						}
 						r.Date = t.Unix()
-					case 1:
+					case code:
 						r.Code = s.Text()
 						if r.Code != "[автокод]" {
 							r.Code = strings.Join(regexp.MustCompile(`[aA-zZ0-9]{1,100}`).FindAllString(r.Code, -1), " ")
@@ -83,7 +90,7 @@ func (c *Collector) collect(d *goquery.Document) {
 						r.Link, _ = s.Find("a").Attr("href")
 						r.Link = strings.Replace(r.Link, "https://li.lovikod.ru", "https://www.litres.ru", -1)
 						r.Link = strings.TrimSuffix(r.Link, "?lfrom=342676429")
-					case 2:
+					case description:
 						r.Description = s.Text()
 					}
 				})
