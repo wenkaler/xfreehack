@@ -87,8 +87,13 @@ func (s *Storage) MarkAsRead(cid int64, rr []collector.Record) error {
 }
 
 func (s *Storage) GetChat() (a []int64, err error) {
-	err = s.db.Unsafe().Select(&a, `SELECT id FROM chats`)
+	err = s.db.Unsafe().Select(&a, `SELECT id FROM chats WHERE active = 1`)
 	return
+}
+
+func (s *Storage) UpdChatActivity(cid int64, act bool) error {
+	_, err := s.db.Unsafe().Exec(`UPDATE chats SET active = ? where id = ?`, act, cid)
+	return err
 }
 
 func (s *Storage) Close() error {
@@ -102,7 +107,8 @@ func (s *Storage) init() error {
 									link VARCHAR(225) NOT NULL UNIQUE,
 									code VARCHAR(100) NOT NULL,
 									description TEXT NOT NULL,
-									'date' BIGINT NOT NULL
+									'date' BIGINT NOT NULL,
+									active BOOLEAN DEFAULT 1
 						)`)
 	if err != nil {
 		return fmt.Errorf("failed create records table: %v", err)

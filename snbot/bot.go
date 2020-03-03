@@ -16,11 +16,14 @@ const info = `Доброго времени суток, вас приветст�
 Купоны будут поступать по мере их нахождения. 
 Если вы хотите получить прямо сейчас те купоны которые имеются у бота можете отправить команду /print5.`
 
+const errBlockedByUser = "Forbidden: bot was blocked by the user"
+
 type Storage interface {
 	GetNotUseCoupon(cid int64) ([]collector.Record, error)
 	MarkAsRead(cid int64, rr []collector.Record) error
 	NewMessage(message *tgbotapi.Message) error
 	NewChat(chat *tgbotapi.Chat) error
+	UpdChatActivity(cid int64, act bool) error
 }
 
 type Config struct {
@@ -121,7 +124,10 @@ func (s *SNBot) Send(chatID int64, msg string) error {
 	m.ReplyMarkup = numericKeyboard
 	message, err := s.bot.Send(m)
 	if err != nil {
-		return fmt.Errorf("failed send message: %v", err)
+		if err.Error() == errBlockedByUser {
+			s.cfg.Storage.UpdChatActivity(chatID, false)
+		}
+		return err
 	}
 	err = s.cfg.Storage.NewMessage(&message)
 	if err != nil {

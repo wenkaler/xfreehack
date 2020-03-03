@@ -75,20 +75,20 @@ func main() {
 		Storage: s,
 	})
 	if err != nil {
-		level.Error(logger).Log("msg", "failed create collectore", "err", err)
+		level.Error(logger).Log("msg", "failed create collector", "err", err)
 		os.Exit(1)
 	}
 	go sn.Run()
 	c.Collect(collector.ConditionQuery{
 		URI: "https://lovikod.ru/knigi/promokody-litres",
 	})
-	gocron.Every(1).Days().At(cfg.TimeToSend).Do(task, sn, s, c, logger)
-	gocron.Start()
+	gocron.Every(1).Days().At("18:00").Do(task, sn, s, c, logger)
+	cronCh := gocron.Start()
 
 	cl := make(chan os.Signal, 1)
 	signal.Notify(cl, syscall.SIGTERM, syscall.SIGINT)
 	sig := <-cl
-
+	cronCh <- true
 	level.Info(logger).Log("msg", "received signal, exiting", "signal", sig)
 	s.Close()
 
