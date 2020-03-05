@@ -58,7 +58,16 @@ type Record struct {
 	Description string `db:"description"`
 }
 
+var (
+	reDate, _  = regexp.Compile(`([0-9]{2}\.){2}[0-9]{4}`)
+	reMonth, _ = regexp.Compile(`([аА-яЯ]{3,8})\s([0-9]{4})`)
+)
+
 func (c *Collector) collect(d *goquery.Document) {
+	if d == nil {
+		level.Error(c.cfg.Logger).Log("msg", "document was nil")
+		return
+	}
 	d.Find("tbody").Each(func(i int, selection *goquery.Selection) {
 		if i == 0 {
 			selection.Find("tr").Each(func(i int, selection *goquery.Selection) {
@@ -68,15 +77,16 @@ func (c *Collector) collect(d *goquery.Document) {
 					case date:
 						var t time.Time
 						var err error
-						sep := strings.Split(s.Text(), " ")
-						if strings.EqualFold(sep[0], "до") {
-							t, err = time.Parse("02.01.2006", sep[1])
+						regexpDate := reDate.FindString(s.Text())
+						regexpMonth := reMonth.FindAllStringSubmatch(s.Text(), 1)
+						if regexpDate != "" {
+							t, err = time.Parse("02.01.2006", regexpDate)
 							if err != nil {
 								level.Error(c.cfg.Logger).Log("msg", "failed parse time", "time", s.Text(), "err", err)
 							}
-						} else {
+						} else if regexpMonth != nil {
 							t1 := time.Date(time.Now().Year(), time.Now().Month()+1, 0, 0, 0, 0, 0, time.Local)
-							t, err = time.Parse("2 January 2006", fmt.Sprintf("%d %s %s", t1.Day(), month[sep[0]], sep[1]))
+							t, err = time.Parse("2 January 2006", fmt.Sprintf("%d %s %s", t1.Day(), month[strings.ToLower(regexpMonth[0][1])], regexpMonth[0][2]))
 							if err != nil {
 								level.Error(c.cfg.Logger).Log("msg", "failed parse time", "time", s.Text(), "err", err)
 							}
