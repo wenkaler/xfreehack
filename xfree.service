@@ -1,0 +1,14 @@
+[Unit]
+Description=Xfree service
+After=network.target
+After=network-online.target
+
+[Service]
+ExecStart=/urs/local/bin/xfree
+Environment="TELEGRAM_TOKEN=$TELEGRAM_TOKEN" "PATH_DB=/db/xfree.db"
+TimeoutSec=30
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
