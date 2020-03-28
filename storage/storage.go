@@ -57,7 +57,7 @@ func (s *Storage) LoadCollect() (map[string]collector.Record, error) {
 }
 
 func (s *Storage) NewChat(chat *tgbotapi.Chat) error {
-	_, err := s.db.Unsafe().Exec(`INSERT INTO chats(id, type, user_name, first_name, last_name ) VALUES(?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, chat.ID, chat.Type, chat.UserName, chat.FirstName, chat.LastName)
+	_, err := s.db.Unsafe().Exec(`INSERT INTO chats(id, type, user_name, first_name, last_name, active) VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, chat.ID, chat.Type, chat.UserName, chat.FirstName, chat.LastName, true)
 	return err
 }
 
