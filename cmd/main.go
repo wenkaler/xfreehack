@@ -24,8 +24,8 @@ import (
 
 type configure struct {
 	ServiceName string `envconfig:"service_name" default:"xFreeService"`
-	PathDB      string `envconfig:"path_db" default:"test.db"`
-	TimeToSend  string `envconfig:"time_to_send" default:"19:00"`
+	PathDB      string `envconfig:"path_db" default:"/db/xfree.db"`
+	TimeToSend  string `envconfig:"time_to_send" default:"18:00"`
 	Telegram    struct {
 		Token      string `envconfig:"telegram_token" required:"true"`
 		UpdateTime int    `envconfig:"telegram_update_bot" default:"60"`
@@ -82,7 +82,7 @@ func main() {
 	c.Collect(collector.ConditionQuery{
 		URI: "https://lovikod.ru/knigi/promokody-litres",
 	})
-	gocron.Every(1).Days().At("18:00").Do(task, sn, s, c, logger)
+	gocron.Every(1).Days().At(cfg.TimeToSend).Do(task, sn, s, c, logger)
 	cronCh := gocron.Start()
 
 	cl := make(chan os.Signal, 1)

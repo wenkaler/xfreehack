@@ -107,8 +107,7 @@ func (s *Storage) init() error {
 									link VARCHAR(225) NOT NULL UNIQUE,
 									code VARCHAR(100) NOT NULL,
 									description TEXT NOT NULL,
-									'date' BIGINT NOT NULL,
-									active BOOLEAN DEFAULT 1
+									'date' BIGINT NOT NULL
 						)`)
 	if err != nil {
 		return fmt.Errorf("failed create records table: %v", err)
@@ -118,7 +117,8 @@ func (s *Storage) init() error {
 									'type' VARCHAR(225) NOT NULL,
 									user_name VARCHAR(100) NULL,
 									first_name VARCHAR(100) NULL,
-									last_name VARCHAR(100) NULL
+									last_name VARCHAR(100) NULL,
+									active BOOLEAN DEFAULT 1
 						)`)
 	if err != nil {
 		return fmt.Errorf("failed create chats table: %v", err)
