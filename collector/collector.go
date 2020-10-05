@@ -75,10 +75,12 @@ func (c *Collector) collect(d *goquery.Document) {
 				selection.Find("td").Each(func(column int, s *goquery.Selection) {
 					switch column {
 					case date:
-						var t time.Time
-						var err error
-						regexpDate := reDate.FindString(s.Text())
-						regexpMonth := reMonth.FindAllStringSubmatch(s.Text(), 1)
+						var (
+							t           time.Time
+							err         error
+							regexpDate  = reDate.FindString(s.Text())
+							regexpMonth = reMonth.FindAllStringSubmatch(s.Text(), 1)
+						)
 						if regexpDate != "" {
 							t, err = time.Parse("02.01.2006", regexpDate)
 							if err != nil {

@@ -124,6 +124,17 @@ func task(bot *snbot.SNBot, s *storage.Storage, c *collector.Collector, logger k
 				level.Error(logger).Log("msg", "failed marked as read", "err", err)
 				continue
 			}
+			count, err := s.CountNotUseCoupon(id)
+			if err != nil {
+				level.Error(logger).Log("msg", "failed get count coupons", "chatID", id, "err", err)
+			} else {
+				msg := fmt.Sprintf("Купоны оставшиеся в базе: %v", count)
+				err = bot.Send(id, msg)
+				if err != nil {
+					level.Error(logger).Log("msg", "failed send message count", "err", err)
+					continue
+				}
+			}
 		}
 	}
 	level.Info(logger).Log("msg", "send all chats new coupons")

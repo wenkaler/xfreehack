@@ -57,7 +57,7 @@ func (s *Storage) LoadCollect() (map[string]collector.Record, error) {
 }
 
 func (s *Storage) NewChat(chat *tgbotapi.Chat) error {
-	_, err := s.db.Unsafe().Exec(`INSERT INTO chats(id, type, user_name, first_name, last_name, active) VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, chat.ID, chat.Type, chat.UserName, chat.FirstName, chat.LastName, true)
+	_, err := s.db.Unsafe().Exec(`INSERT INTO chats(id, type, user_name, first_name, last_name, active) VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = true`, chat.ID, chat.Type, chat.UserName, chat.FirstName, chat.LastName, true)
 	return err
 }
 
@@ -74,6 +74,26 @@ func (s *Storage) GetNotUseCoupon(cid int64) ([]collector.Record, error) {
 		return nil, err
 	}
 	return rr, nil
+}
+
+func (s *Storage) GetNotUseCouponCount(cid, count int64) ([]collector.Record, error) {
+	var rr []collector.Record
+	var t = time.Now().AddDate(0, 0, -1).Unix()
+	err := s.db.Unsafe().Select(&rr, `select records.* from records LEFT OUTER JOIN (SELECT * FROM relation_chat_records as rcr where rcr.id_chat = ?)  rcr on records.id = rcr.id_record where rcr.status = 0 and records.date = ? or rcr.id_record is null and records.date > ? limit ?`, cid, t, t, count)
+	if err != nil {
+		return nil, err
+	}
+	return rr, nil
+}
+
+func (s *Storage) CountNotUseCoupon(cid int64) (uint64, error) {
+	var rr []uint64
+	var t = time.Now().AddDate(0, 0, -1).Unix()
+	err := s.db.Unsafe().Select(&rr, `select count(records.id) from records LEFT OUTER JOIN (SELECT * FROM relation_chat_records as rcr where rcr.id_chat = ?)  rcr on records.id = rcr.id_record where rcr.status = 0 and records.date = ? or rcr.id_record is null and records.date > ?`, cid, t, t)
+	if err != nil {
+		return 0, err
+	}
+	return rr[0], nil
 }
 
 func (s *Storage) MarkAsRead(cid int64, rr []collector.Record) error {
