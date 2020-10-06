@@ -16,7 +16,8 @@ import (
 const info = `Доброго времени суток, вас приветствует xFree Bot!
 Предназначенный собирать купоны и постить их в этот чат каждый день в 18:00 по МСК.
 Купоны будут поступать по мере их нахождения. 
-Если вы хотите получить прямо сейчас те купоны которые имеются у бота можете отправить команду /print 5 (кол-во купонов по умолчанию 5).`
+Если вы хотите получить прямо сейчас те купоны которые имеются у бота можете отправить команду /print 5 (кол-во купонов по умолчанию 5).
+https://t.me/XFRebot - группа в которой можно задать вопросы по боту.`
 
 const errBlockedByUser = "Forbidden: bot was blocked by the user"
 
@@ -61,6 +62,48 @@ func New(cfg *Config) (*SNBot, error) {
 	}, nil
 }
 
+func (s *SNBot) SendCoupons(chatID int64, cmdArgs string) error {
+	var count int64 = 5
+	var msg string
+	if strings.TrimSpace(cmdArgs) != "" {
+		ss := strings.Trim(cmdArgs, " ")
+		c, err := strconv.ParseInt(ss, 10, 64)
+		if err == nil {
+			count = c
+		}
+	}
+	records, err := s.cfg.Storage.GetNotUseCouponCount(chatID, count)
+	if err != nil {
+		return fmt.Errorf("failed get coupons: %v", err)
+	}
+	for i, rec := range records {
+		msg = fmt.Sprintf("%v%v:\t%s \nКод--->: %s\nВремя истечения: %v\nОписание: %s\n\n", msg, i+1, rec.Link, rec.Code, time.Unix(rec.Date, 0).Format("02.01.2006"), rec.Description)
+	}
+	if len(msg) == 0 {
+		msg = `Вы получили все доступные купоны на данный момент.`
+	}
+	err = s.Send(chatID, msg)
+	if err != nil {
+		return err
+	}
+
+	err = s.cfg.Storage.MarkAsRead(chatID, records)
+	if err != nil {
+		return fmt.Errorf("failed marked as read: %v", err)
+	}
+	cc, err := s.cfg.Storage.CountNotUseCoupon(chatID)
+	if err != nil {
+		level.Error(s.cfg.Logger).Log("msg", "failed get count coupons", "chatID", chatID, "err", err)
+	} else if cc != 0 {
+		msg := fmt.Sprintf("Купоны оставшиеся в базе: %v", cc)
+		err = s.Send(chatID, msg)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *SNBot) read(message *tgbotapi.Message) error {
 	var msg string
 	switch message.Command() {
@@ -72,47 +115,9 @@ func (s *SNBot) read(message *tgbotapi.Message) error {
 		msg = info
 		s.Send(message.Chat.ID, msg)
 	case "print":
-		var count int64
-		commands := message.CommandArguments()
-		ss := strings.Trim(commands, " ")
-		if len(ss) == 0 {
-			count = 5
-		} else {
-			c, err := strconv.ParseInt(ss, 10, 64)
-			if err != nil {
-				count = 5
-			} else {
-				count = c
-			}
-		}
-		records, err := s.cfg.Storage.GetNotUseCouponCount(message.Chat.ID, count)
-		if err != nil {
-			return fmt.Errorf("failed get coupons: %v", err)
-		}
-		for i, rec := range records {
-			msg = fmt.Sprintf("%v%v:\t%s \nКод--->: %s\nВремя истечения: %v\nОписание: %s\n\n", msg, i+1, rec.Link, rec.Code, time.Unix(rec.Date, 0).Format("02.01.2006"), rec.Description)
-		}
-		if len(msg) == 0 {
-			msg = `Вы получили все доступные купоны на данный момент.`
-		}
-		err = s.Send(message.Chat.ID, msg)
+		err := s.SendCoupons(message.Chat.ID, message.CommandArguments())
 		if err != nil {
 			return err
-		}
-
-		err = s.cfg.Storage.MarkAsRead(message.Chat.ID, records)
-		if err != nil {
-			return fmt.Errorf("failed marked as read: %v", err)
-		}
-		cc, err := s.cfg.Storage.CountNotUseCoupon(message.Chat.ID)
-		if err != nil {
-			level.Error(s.cfg.Logger).Log("msg", "failed get count coupons", "chatID", message.Chat.ID, "err", err)
-		} else {
-			msg := fmt.Sprintf("Купоны оставшиеся в базе: %v", cc)
-			err = s.Send(message.Chat.ID, msg)
-			if err != nil {
-				return err
-			}
 		}
 	default:
 		msg = info

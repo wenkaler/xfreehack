@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/wenkaler/xfreehack/snbot"
 
@@ -104,37 +103,10 @@ func task(bot *snbot.SNBot, s *storage.Storage, c *collector.Collector, logger k
 		level.Error(logger).Log("msg", "failed get chats", "err", err)
 	}
 	for _, id := range chats {
-		records, err := s.GetNotUseCoupon(id)
+		err := bot.SendCoupons(id, "")
 		if err != nil {
-			level.Error(logger).Log("msg", "failed get coupons", "err", err)
-			return
-		}
-		var msg string
-		for i, rec := range records {
-			msg = fmt.Sprintf("%v%v:\t%s \nКод--->: %s\nВремя истечения: %v\nОписание: %s\n\n", msg, i+1, rec.Link, rec.Code, time.Unix(rec.Date, 0).Format("02.01.2006"), rec.Description)
-		}
-		if len(msg) != 0 {
-			err = bot.Send(id, msg)
-			if err != nil {
-				level.Error(logger).Log("msg", "failed send message", "err", err)
-				continue
-			}
-			err = s.MarkAsRead(id, records)
-			if err != nil {
-				level.Error(logger).Log("msg", "failed marked as read", "err", err)
-				continue
-			}
-			count, err := s.CountNotUseCoupon(id)
-			if err != nil {
-				level.Error(logger).Log("msg", "failed get count coupons", "chatID", id, "err", err)
-			} else {
-				msg := fmt.Sprintf("Купоны оставшиеся в базе: %v", count)
-				err = bot.Send(id, msg)
-				if err != nil {
-					level.Error(logger).Log("msg", "failed send message count", "err", err)
-					continue
-				}
-			}
+			level.Error(logger).Log("msg", "failed send coupons", "chatID", id, "err", err)
+			continue
 		}
 	}
 	level.Info(logger).Log("msg", "send all chats new coupons")

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/wenkaler/xfreehack/model"
+
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 
 	"github.com/go-kit/kit/log/level"
@@ -84,6 +86,23 @@ func (s *Storage) GetNotUseCouponCount(cid, count int64) ([]collector.Record, er
 		return nil, err
 	}
 	return rr, nil
+}
+
+func (s *Storage) GetUnsentNotification() ([]model.Notification, error) {
+	var rr []model.Notification
+	err := s.db.Unsafe().Select(&rr, `select * from notification where send = false`)
+	if err != nil {
+		return nil, err
+	}
+	return rr, nil
+}
+
+func (s *Storage) MarkSentNotification(id int64) error {
+	_, err := s.db.Unsafe().Exec(`UPDATE notification SET send = true where id = ?`, id)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Storage) CountNotUseCoupon(cid int64) (uint64, error) {
@@ -167,6 +186,15 @@ func (s *Storage) init() error {
 	_, err = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS  rcr ON relation_chat_records(id_record, id_chat)`)
 	if err != nil {
 		return fmt.Errorf("failed create index table: %v", err)
+	}
+
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS notification(
+									id INTEGER PRIMARY KEY AUTOINCREMENT,
+									message TEXT NOT NULL,
+									send BOOLEAN DEFAULT FALSE 
+						)`)
+	if err != nil {
+		return fmt.Errorf("failed create messages table: %v", err)
 	}
 	level.Info(s.logger).Log("msg", "create data base, with table.")
 	return nil
