@@ -1,6 +1,7 @@
 package snbot
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ const errBlockedByUser = "Forbidden: bot was blocked by the user"
 type Storage interface {
 	GetNotUseCoupon(cid int64) ([]collector.Record, error)
 	GetNotUseCouponCount(cid, count int64) ([]collector.Record, error)
+	GetCountUser() (int, error)
 	CountNotUseCoupon(cid int64) (uint64, error)
 	MarkAsRead(cid int64, rr []collector.Record) error
 	NewChat(chat *tgbotapi.Chat) error
@@ -31,10 +33,11 @@ type Storage interface {
 }
 
 type Config struct {
-	Logger     log.Logger
-	Storage    Storage
-	Token      string
-	UpdateTime int
+	Logger      log.Logger
+	Storage     Storage
+	Token       string
+	UpdateTime  int
+	AccessToken string
 }
 
 type SNBot struct {
@@ -62,12 +65,19 @@ func New(cfg *Config) (*SNBot, error) {
 	}, nil
 }
 
-func (s *SNBot) SendCoupons(chatID int64, cmdArgs string) error {
+type reqType int
+
+const (
+	Command reqType = 0
+	Daily   reqType = 1
+)
+
+func (s *SNBot) SendCoupons(chatID int64, cmdArgs string, t reqType) error {
 	var count int64 = 5
 	var msg string
 	if strings.TrimSpace(cmdArgs) != "" {
-		ss := strings.Trim(cmdArgs, " ")
-		c, err := strconv.ParseInt(ss, 10, 64)
+		ss := strings.Split(cmdArgs, " ")
+		c, err := strconv.ParseInt(ss[0], 10, 64)
 		if err == nil {
 			count = c
 		}
@@ -79,7 +89,7 @@ func (s *SNBot) SendCoupons(chatID int64, cmdArgs string) error {
 	for i, rec := range records {
 		msg = fmt.Sprintf("%v%v:\t%s \nКод--->: %s\nВремя истечения: %v\nОписание: %s\n\n", msg, i+1, rec.Link, rec.Code, time.Unix(rec.Date, 0).Format("02.01.2006"), rec.Description)
 	}
-	if len(msg) == 0 {
+	if len(msg) == 0 && t == Command {
 		msg = `Вы получили все доступные купоны на данный момент.`
 	}
 	err = s.Send(chatID, msg)
@@ -115,7 +125,12 @@ func (s *SNBot) read(message *tgbotapi.Message) error {
 		msg = info
 		s.Send(message.Chat.ID, msg)
 	case "print":
-		err := s.SendCoupons(message.Chat.ID, message.CommandArguments())
+		err := s.SendCoupons(message.Chat.ID, message.CommandArguments(), Command)
+		if err != nil {
+			return err
+		}
+	case "stat":
+		err := s.SendStat(message.Chat.ID, message.CommandArguments())
 		if err != nil {
 			return err
 		}
@@ -155,6 +170,22 @@ func (s *SNBot) Send(chatID int64, msg string) error {
 			s.cfg.Storage.UpdChatActivity(chatID, false)
 		}
 		return err
+	}
+	return nil
+}
+
+func (s *SNBot) SendStat(chatID int64, args string) error {
+	if strings.TrimSpace(args) != "" {
+		ss := strings.Split(args, " ")
+		token := ss[0]
+		if s.cfg.AccessToken != token {
+			return errors.New("failed token")
+		}
+		count, err := s.cfg.Storage.GetCountUser()
+		if err != nil {
+			return err
+		}
+		s.Send(chatID, fmt.Sprintf("Активных пользователей в базе: %d", count))
 	}
 	return nil
 }

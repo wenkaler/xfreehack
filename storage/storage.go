@@ -130,6 +130,12 @@ func (s *Storage) GetChat() (a []int64, err error) {
 	return
 }
 
+func (s *Storage) GetCountUser() (int, error) {
+	var a []int
+	err := s.db.Unsafe().Select(&a, `SELECT count(id) FROM chats WHERE active = 1`)
+	return a[0], err
+}
+
 func (s *Storage) UpdChatActivity(cid int64, act bool) error {
 	_, err := s.db.Unsafe().Exec(`UPDATE chats SET active = ? where id = ?`, act, cid)
 	return err

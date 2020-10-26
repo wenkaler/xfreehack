@@ -29,6 +29,7 @@ type configure struct {
 		Token      string `envconfig:"telegram_token" required:"true"`
 		UpdateTime int    `envconfig:"telegram_update_bot" default:"60"`
 	}
+	AccessToken string `envconfig:"access_token" required:"true"`
 }
 
 var serviceVersion = "dev"
@@ -59,10 +60,11 @@ func main() {
 	}
 
 	sn, err := snbot.New(&snbot.Config{
-		Logger:     logger,
-		Storage:    s,
-		Token:      cfg.Telegram.Token,
-		UpdateTime: cfg.Telegram.UpdateTime,
+		Logger:      logger,
+		Storage:     s,
+		Token:       cfg.Telegram.Token,
+		UpdateTime:  cfg.Telegram.UpdateTime,
+		AccessToken: cfg.AccessToken,
 	})
 	if err != nil {
 		level.Error(logger).Log("msg", "failed create bot", "err", err)
@@ -103,7 +105,7 @@ func task(bot *snbot.SNBot, s *storage.Storage, c *collector.Collector, logger k
 		level.Error(logger).Log("msg", "failed get chats", "err", err)
 	}
 	for _, id := range chats {
-		err := bot.SendCoupons(id, "")
+		err := bot.SendCoupons(id, "", snbot.Daily)
 		if err != nil {
 			level.Error(logger).Log("msg", "failed send coupons", "chatID", id, "err", err)
 			continue
