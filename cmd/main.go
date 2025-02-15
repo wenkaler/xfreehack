@@ -1,82 +1,55 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/wenkaler/xfreehack/snbot"
-
 	"github.com/jasonlvhit/gocron"
+	"github.com/spf13/viper"
 
-	"github.com/wenkaler/xfreehack/storage"
-
-	"github.com/kelseyhightower/envconfig"
-	"github.com/wenkaler/xfreehack/collector"
-
-	kitlog "github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
+	"github.com/wenkaler/xfreehack/internal/bot"
+	"github.com/wenkaler/xfreehack/internal/collector"
+	"github.com/wenkaler/xfreehack/internal/config"
+	"github.com/wenkaler/xfreehack/internal/storage"
 )
-
-type configure struct {
-	ServiceName string `envconfig:"service_name" default:"xFreeService"`
-	PathDB      string `envconfig:"path_db" default:"/db/xfree.db"`
-	TimeToSend  string `envconfig:"time_to_send" default:"18:00"`
-	Telegram    struct {
-		Token      string `envconfig:"telegram_token" required:"true"`
-		UpdateTime int    `envconfig:"telegram_update_bot" default:"60"`
-	}
-	AccessToken string `envconfig:"access_token" required:"true"`
-}
 
 var serviceVersion = "dev"
 
 func main() {
-	printVersion := flag.Bool("version", false, "print version and exit")
-	flag.Parse()
-	if *printVersion {
-		fmt.Println(serviceVersion)
-		os.Exit(0)
-	}
+	// Create a logger instance with JSON formatting
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	logger := kitlog.NewLogfmtLogger(kitlog.NewSyncWriter(os.Stderr))
-	logger = kitlog.With(logger, "caller", kitlog.DefaultCaller)
-	log.SetOutput(kitlog.NewStdlibAdapter(logger))
-	logger = kitlog.With(logger, "ts", kitlog.DefaultTimestampUTC)
-
-	var cfg configure
-	err := envconfig.Process("", &cfg)
-	if err != nil {
-		level.Error(logger).Log("msg", "failed to load configuration", "err", err)
-		os.Exit(1)
-	}
-	s, err := storage.New(cfg.PathDB, logger)
-	if err != nil {
-		level.Error(logger).Log("msg", "failed create storage", "err", err)
+	// Unmarshal config into a struct
+	var cfg config.Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		logger.Error("viper.Unmarshal:", slog.Any("error", err))
 		os.Exit(1)
 	}
 
-	sn, err := snbot.New(&snbot.Config{
-		Logger:      logger,
-		Storage:     s,
-		Token:       cfg.Telegram.Token,
-		UpdateTime:  cfg.Telegram.UpdateTime,
-		AccessToken: cfg.AccessToken,
-	})
+	store, err := storage.New(cfg.PathDB)
 	if err != nil {
-		level.Error(logger).Log("msg", "failed create bot", "err", err)
+		logger.Error("storage.New", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	sn, err := bot.New(
+		cfg.TBot.AccessToken,
+		cfg.TBot.AdminChatID,
+		store,
+		cfg.TBot.UpdateConfig,
+	)
+	if err != nil {
+		logger.Error("bot.New", slog.Any("error", err))
 		os.Exit(1)
 	}
 
 	c, err := collector.New(&collector.Config{
-		Logger:  logger,
-		Storage: s,
+		Storage: store,
 	})
 	if err != nil {
-		level.Error(logger).Log("msg", "failed create collector", "err", err)
+		logger.Error("collector.New", slog.Any("error", err))
 		os.Exit(1)
 	}
 	go sn.Run()
@@ -90,26 +63,26 @@ func main() {
 	signal.Notify(cl, syscall.SIGTERM, syscall.SIGINT)
 	sig := <-cl
 	cronCh <- true
-	level.Info(logger).Log("msg", "received signal, exiting", "signal", sig)
-	s.Close()
+	logger.Info("received signal, exiting", slog.Any("sign", sig))
+	store.Close()
 
-	level.Info(logger).Log("msg", "goodbye")
+	logger.Info("msg", "goodbye")
 }
 
-func task(bot *snbot.SNBot, s *storage.Storage, c *collector.Collector, logger kitlog.Logger) {
+func task(bot *bot.TBot, s *storage.Storage, c *collector.Collector, logger *slog.Logger) {
 	c.Collect(collector.ConditionQuery{
 		URI: "https://lovikod.ru/knigi/promokody-litres",
 	})
 	chats, err := s.GetChat()
 	if err != nil {
-		level.Error(logger).Log("msg", "failed get chats", "err", err)
+		logger.Error("failed get chats", slog.Any("error", err))
 	}
 	for _, id := range chats {
-		err := bot.SendCoupons(id, "", snbot.Daily)
+		err := bot.SendCoupons(id, "", bot.Daily)
 		if err != nil {
-			level.Error(logger).Log("msg", "failed send coupons", "chatID", id, "err", err)
+			logger.Error("failed send coupons", slog.Any("error", err))
 			continue
 		}
 	}
-	level.Info(logger).Log("msg", "send all chats new coupons")
+	logger.Info("send all chats new coupons")
 }
