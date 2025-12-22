@@ -1,3 +1,47 @@
-.idea
+# Binaries
+main
+xfree
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+/build/
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+*.prof
+
+# Dependencies
+/vendor/
+go.work
+go.work.sum
+
+# IDEs
+.idea/
+.vscode/
+.zed/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Config and Secrets
+.env
+.env.local
+config.yaml
+*.key
+*.pem
+secrets.yaml
+
+# Logs and Temp
+*.log
+logs/
+tmp/
 *.db
 start.sh
+.agent

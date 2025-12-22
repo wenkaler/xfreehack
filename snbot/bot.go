@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wenkaler/xfreehack/collector"
+	"github.com/wenkaler/xfreehack/model"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
@@ -23,11 +23,11 @@ https://t.me/XFRebot - группа в которой можно задать в
 const errBlockedByUser = "Forbidden: bot was blocked by the user"
 
 type Storage interface {
-	GetNotUseCoupon(cid int64) ([]collector.Record, error)
-	GetNotUseCouponCount(cid, count int64) ([]collector.Record, error)
+	GetNotUseCoupon(cid int64) ([]model.Coupon, error)
+	GetNotUseCouponCount(cid, count int64) ([]model.Coupon, error)
 	GetCountUser() (int, error)
 	CountNotUseCoupon(cid int64) (uint64, error)
-	MarkAsRead(cid int64, rr []collector.Record) error
+	MarkAsRead(cid int64, rr []model.Coupon) error
 	NewChat(chat *tgbotapi.Chat) error
 	UpdChatActivity(cid int64, act bool) error
 }
@@ -87,7 +87,7 @@ func (s *SNBot) SendCoupons(chatID int64, cmdArgs string, t reqType) error {
 		return fmt.Errorf("failed get coupons: %v", err)
 	}
 	for i, rec := range records {
-		msg = fmt.Sprintf("%v%v:\t%s \nКод--->: %s\nВремя истечения: %v\nОписание: %s\n\n", msg, i+1, rec.Link, rec.Code, time.Unix(rec.Date, 0).Format("02.01.2006"), rec.Description)
+		msg = fmt.Sprintf("%v%v:\t%s \nКод--->: %s\nВремя истечения: %v\nОписание: %s\n\n", msg, i+1, rec.Link, rec.Code, time.Unix(rec.ExpiryDate, 0).Format("02.01.2006"), rec.Description)
 	}
 	if len(msg) == 0 && t == Command {
 		msg = `Вы получили все доступные купоны на данный момент.`

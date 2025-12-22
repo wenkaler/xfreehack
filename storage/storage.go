@@ -8,12 +8,9 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 
-	"github.com/go-kit/kit/log/level"
-
 	"github.com/go-kit/kit/log"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/mattn/go-sqlite3"
-	"github.com/wenkaler/xfreehack/collector"
 )
 
 type Storage struct {
@@ -21,67 +18,119 @@ type Storage struct {
 	logger log.Logger
 }
 
-func New(pathDB string, logger log.Logger) (*Storage, error) {
-	if pathDB == "" {
-		return nil, fmt.Errorf("pathDB was empty")
+func New(dsn string, logger log.Logger) (*Storage, error) {
+	if dsn == "" {
+		return nil, fmt.Errorf("dsn was empty")
 	}
-	db, err := sqlx.Open("sqlite3", pathDB)
+	db, err := sqlx.Open("pgx", dsn)
 	if err != nil {
 		return nil, err
+	}
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping db: %w", err)
 	}
 	s := &Storage{
 		db:     db,
 		logger: logger,
 	}
-	err = s.init()
-	if err != nil {
-		return nil, err
-	}
+
 	return s, nil
 }
 
-func (s *Storage) Collect(record collector.Record) error {
-	_, err := s.db.Exec(`INSERT INTO records(post_id, link, code, description, date) VALUES(?,?,?,?,?) ON CONFLICT(link) DO NOTHING`, record.PostID, record.Link, record.Code, record.Description, record.Date)
+// SaveCategory inserts or updates a category and returns its ID
+func (s *Storage) SaveCategory(c model.Category) (int, error) {
+	var id int
+	err := s.db.QueryRow(`
+		INSERT INTO categories (name, slug)
+		VALUES ($1, $2)
+		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
+		RETURNING id
+	`, c.Name, c.Slug).Scan(&id)
+	return id, err
+}
+
+// SaveStore inserts or updates a store and returns its ID
+func (s *Storage) SaveStore(st model.Store) (int, error) {
+	var id int
+	err := s.db.QueryRow(`
+		INSERT INTO stores (name, slug, url, category_id)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, url = EXCLUDED.url, category_id = EXCLUDED.category_id
+		RETURNING id
+	`, st.Name, st.Slug, st.URL, st.CategoryID).Scan(&id)
+	return id, err
+}
+
+// SaveCoupon inserts a coupon
+func (s *Storage) SaveCoupon(c model.Coupon) error {
+	_, err := s.db.Exec(`
+		INSERT INTO coupons (store_id, code, description, expiry_date, link, is_exclusive)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (link) DO UPDATE SET 
+			code = EXCLUDED.code, 
+			description = EXCLUDED.description, 
+			expiry_date = EXCLUDED.expiry_date
+	`, c.StoreID, c.Code, c.Description, c.ExpiryDate, c.Link, c.IsExclusive)
 	return err
 }
 
-func (s *Storage) LoadCollect() (map[string]collector.Record, error) {
-	var m = make(map[string]collector.Record)
-	var rr []collector.Record
-	err := s.db.Unsafe().Select(&rr, `SELECT * FROM records`)
+func (s *Storage) LoadCollect() (map[string]model.Coupon, error) {
+	var m = make(map[string]model.Coupon)
+	var rr []model.Coupon
+	err := s.db.Select(&rr, `SELECT * FROM coupons`)
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range rr {
-		m[r.PostID] = r
+		m[r.Link] = r
 	}
 	return m, nil
 }
 
 func (s *Storage) NewChat(chat *tgbotapi.Chat) error {
-	_, err := s.db.Unsafe().Exec(`INSERT INTO chats(id, type, user_name, first_name, last_name, active) VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = true`, chat.ID, chat.Type, chat.UserName, chat.FirstName, chat.LastName, true)
+	_, err := s.db.Exec(`
+		INSERT INTO chats (id, type, user_name, first_name, last_name, active)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (id) DO UPDATE SET active = true
+	`, chat.ID, chat.Type, chat.UserName, chat.FirstName, chat.LastName, true)
 	return err
 }
 
 func (s *Storage) NewMessage(msg *tgbotapi.Message) error {
-	_, err := s.db.Unsafe().Exec(`INSERT INTO main.messages(id, id_chat, message) VALUES(?, ?, ?) ON CONFLICT(id) DO NOTHING`, msg.MessageID, msg.Chat.ID, msg.Text)
+	_, err := s.db.Exec(`
+		INSERT INTO messages (id, chat_id, message)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (id) DO NOTHING
+	`, msg.MessageID, msg.Chat.ID, msg.Text)
 	return err
 }
 
-func (s *Storage) GetNotUseCoupon(cid int64) ([]collector.Record, error) {
-	var rr []collector.Record
+func (s *Storage) GetNotUseCoupon(cid int64) ([]model.Coupon, error) {
+	var rr []model.Coupon
 	var t = time.Now().AddDate(0, 0, -1).Unix()
-	err := s.db.Unsafe().Select(&rr, `select records.* from records LEFT OUTER JOIN (SELECT * FROM relation_chat_records as rcr where rcr.id_chat = ?)  rcr on records.id = rcr.id_record where rcr.status = 0 and records.date = ? or rcr.id_record is null and records.date > ? limit 5`, cid, t, t)
+	err := s.db.Select(&rr, `
+		SELECT c.*
+		FROM coupons c
+		LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
+		WHERE (rcc.status = FALSE OR rcc.status IS NULL) AND c.expiry_date > $2
+		LIMIT 5
+	`, cid, t)
 	if err != nil {
 		return nil, err
 	}
 	return rr, nil
 }
 
-func (s *Storage) GetNotUseCouponCount(cid, count int64) ([]collector.Record, error) {
-	var rr []collector.Record
+func (s *Storage) GetNotUseCouponCount(cid, count int64) ([]model.Coupon, error) {
+	var rr []model.Coupon
 	var t = time.Now().AddDate(0, 0, -1).Unix()
-	err := s.db.Unsafe().Select(&rr, `select records.* from records LEFT OUTER JOIN (SELECT * FROM relation_chat_records as rcr where rcr.id_chat = ?)  rcr on records.id = rcr.id_record where rcr.status = 0 and records.date = ? or rcr.id_record is null and records.date > ? limit ?`, cid, t, t, count)
+	err := s.db.Select(&rr, `
+		SELECT c.*
+		FROM coupons c
+		LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
+		WHERE (rcc.status = FALSE OR rcc.status IS NULL) AND c.expiry_date > $2
+		LIMIT $3
+	`, cid, t, count)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +139,7 @@ func (s *Storage) GetNotUseCouponCount(cid, count int64) ([]collector.Record, er
 
 func (s *Storage) GetUnsentNotification() ([]model.Notification, error) {
 	var rr []model.Notification
-	err := s.db.Unsafe().Select(&rr, `select * from notification where send = false`)
+	err := s.db.Select(&rr, `SELECT * FROM notifications WHERE sent = false`)
 	if err != nil {
 		return nil, err
 	}
@@ -98,26 +147,32 @@ func (s *Storage) GetUnsentNotification() ([]model.Notification, error) {
 }
 
 func (s *Storage) MarkSentNotification(id int64) error {
-	_, err := s.db.Unsafe().Exec(`UPDATE notification SET send = true where id = ?`, id)
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err := s.db.Exec(`UPDATE notifications SET sent = true WHERE id = $1`, id)
+	return err
 }
 
 func (s *Storage) CountNotUseCoupon(cid int64) (uint64, error) {
-	var rr []uint64
+	var cnt uint64
 	var t = time.Now().AddDate(0, 0, -1).Unix()
-	err := s.db.Unsafe().Select(&rr, `select count(records.id) from records LEFT OUTER JOIN (SELECT * FROM relation_chat_records as rcr where rcr.id_chat = ?)  rcr on records.id = rcr.id_record where rcr.status = 0 and records.date = ? or rcr.id_record is null and records.date > ?`, cid, t, t)
+	err := s.db.Get(&cnt, `
+		SELECT count(c.id)
+		FROM coupons c
+		LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
+		WHERE (rcc.status = FALSE OR rcc.status IS NULL) AND c.expiry_date > $2
+	`, cid, t)
 	if err != nil {
 		return 0, err
 	}
-	return rr[0], nil
+	return cnt, nil
 }
 
-func (s *Storage) MarkAsRead(cid int64, rr []collector.Record) error {
+func (s *Storage) MarkAsRead(cid int64, rr []model.Coupon) error {
 	for _, r := range rr {
-		_, err := s.db.Unsafe().Exec(`INSERT INTO relation_chat_records (id_record, id_chat, status) VALUES(?, ?, ?) ON CONFLICT(id_chat, id_record) DO UPDATE SET status = EXCLUDED.status`, r.ID, cid, true)
+		_, err := s.db.Exec(`
+			INSERT INTO relation_chat_coupons (coupon_id, chat_id, status)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (coupon_id, chat_id) DO UPDATE SET status = EXCLUDED.status
+		`, r.ID, cid, true)
 		if err != nil {
 			return err
 		}
@@ -126,82 +181,21 @@ func (s *Storage) MarkAsRead(cid int64, rr []collector.Record) error {
 }
 
 func (s *Storage) GetChat() (a []int64, err error) {
-	err = s.db.Unsafe().Select(&a, `SELECT id FROM chats WHERE active = 1`)
+	err = s.db.Select(&a, `SELECT id FROM chats WHERE active = true`)
 	return
 }
 
 func (s *Storage) GetCountUser() (int, error) {
-	var a []int
-	err := s.db.Unsafe().Select(&a, `SELECT count(id) FROM chats WHERE active = 1`)
-	return a[0], err
+	var count int
+	err := s.db.Get(&count, `SELECT count(id) FROM chats WHERE active = true`)
+	return count, err
 }
 
 func (s *Storage) UpdChatActivity(cid int64, act bool) error {
-	_, err := s.db.Unsafe().Exec(`UPDATE chats SET active = ? where id = ?`, act, cid)
+	_, err := s.db.Exec(`UPDATE chats SET active = $1 WHERE id = $2`, act, cid)
 	return err
 }
 
 func (s *Storage) Close() error {
 	return s.db.Close()
-}
-
-func (s *Storage) init() error {
-	_, err := s.db.Unsafe().Exec(`CREATE TABLE  IF NOT EXISTS records(
-									id INTEGER PRIMARY KEY AUTOINCREMENT,
-									post_id VARCHAR(40) NOT NULL,
-									link VARCHAR(225) NOT NULL UNIQUE,
-									code VARCHAR(100) NOT NULL,
-									description TEXT NOT NULL,
-									'date' BIGINT NOT NULL
-						)`)
-	if err != nil {
-		return fmt.Errorf("failed create records table: %v", err)
-	}
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS chats(
-									id INTEGER PRIMARY KEY UNIQUE,
-									'type' VARCHAR(225) NOT NULL,
-									user_name VARCHAR(100) NULL,
-									first_name VARCHAR(100) NULL,
-									last_name VARCHAR(100) NULL,
-									active BOOLEAN DEFAULT 1
-						)`)
-	if err != nil {
-		return fmt.Errorf("failed create chats table: %v", err)
-	}
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS messages(
-									id INTEGER PRIMARY KEY UNIQUE,
-									id_chat INTEGER NOT NULL,
-									message TEXT NOT NULL,
-									FOREIGN KEY (id_chat) REFERENCES chats(id)
-						)`)
-	if err != nil {
-		return fmt.Errorf("failed create messages table: %v", err)
-	}
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS relation_chat_records(
-									id INTEGER PRIMARY KEY AUTOINCREMENT,
-									id_record INTEGER NOT NULL,
-									id_chat INTEGER NOT NULL,
-									status BOOLEAN DEFAULT FALSE ,
-									FOREIGN KEY (id_chat) REFERENCES chats(id),
-									FOREIGN KEY (id_record) REFERENCES records(id)
-						)`)
-	if err != nil {
-		return fmt.Errorf("failed create messages table: %v", err)
-	}
-
-	_, err = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS  rcr ON relation_chat_records(id_record, id_chat)`)
-	if err != nil {
-		return fmt.Errorf("failed create index table: %v", err)
-	}
-
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS notification(
-									id INTEGER PRIMARY KEY AUTOINCREMENT,
-									message TEXT NOT NULL,
-									send BOOLEAN DEFAULT FALSE 
-						)`)
-	if err != nil {
-		return fmt.Errorf("failed create messages table: %v", err)
-	}
-	level.Info(s.logger).Log("msg", "create data base, with table.")
-	return nil
 }
