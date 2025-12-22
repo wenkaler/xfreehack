@@ -87,7 +87,11 @@ func (s *SNBot) SendCoupons(chatID int64, cmdArgs string, t reqType) error {
 		return fmt.Errorf("failed get coupons: %v", err)
 	}
 	for i, rec := range records {
-		msg = fmt.Sprintf("%v%v:\t%s \nКод--->: %s\nВремя истечения: %v\nОписание: %s\n\n", msg, i+1, rec.Link, rec.Code, time.Unix(rec.ExpiryDate, 0).Format("02.01.2006"), rec.Description)
+		code := rec.Code
+		if code == "[автокод]" {
+			code = "Не требуется (автоматически)"
+		}
+		msg = fmt.Sprintf("%v%v:\t%s \nКод--->: %s\nВремя истечения: %v\nОписание: %s\n\n", msg, i+1, rec.Link, code, time.Unix(rec.ExpiryDate, 0).Format("02.01.2006"), rec.Description)
 	}
 	if len(msg) == 0 && t == Command {
 		msg = `Вы получили все доступные купоны на данный момент.`

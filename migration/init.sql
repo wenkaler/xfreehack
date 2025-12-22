@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS coupons (
     code VARCHAR(100) NOT NULL,
     description TEXT NOT NULL,
     expiry_date BIGINT NOT NULL,
-    link VARCHAR(255) UNIQUE,
+    link TEXT UNIQUE,
     is_exclusive BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

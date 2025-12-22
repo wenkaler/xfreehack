@@ -232,10 +232,16 @@ func (c *Collector) parseCoupons(store model.Store) ([]model.Coupon, error) {
 		if codeSel.Length() == 0 {
 			return
 		}
-		code := strings.TrimSpace(codeSel.Text())
+		originalCode := strings.TrimSpace(codeSel.Text())
+		code := originalCode
 
 		if code == "" {
 			return
+		}
+
+		// Normalize "autocode"
+		if strings.Contains(strings.ToLower(code), "автокод") {
+			code = "[автокод]"
 		}
 
 		// Find date: usually the first cell
