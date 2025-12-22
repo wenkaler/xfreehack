@@ -29,3 +29,10 @@ type Coupon struct {
 	Link        string `db:"link"`
 	IsExclusive bool   `db:"is_exclusive"`
 }
+
+type Subscription struct {
+	ID         int   `db:"id"`
+	ChatID     int64 `db:"chat_id"`
+	CategoryID *int  `db:"category_id"`
+	StoreID    *int  `db:"store_id"`
+}

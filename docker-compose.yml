@@ -28,8 +28,8 @@ services:
       DB_NAME: xfreehack
       DB_PORT: 5432
       DB_SSL_MODE: disable
-      #TELEGRAM_TOKEN: "" # Uncomment to set here
-      #ACCESS_TOKEN: ""
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      ACCESS_TOKEN: ${ACCESS_TOKEN}
     restart: always
 
 volumes:

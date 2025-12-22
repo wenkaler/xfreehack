@@ -30,6 +30,20 @@ type Storage interface {
 	MarkAsRead(cid int64, rr []model.Coupon) error
 	NewChat(chat *tgbotapi.Chat) error
 	UpdChatActivity(cid int64, act bool) error
+
+	// Subscriptions
+	SubscribeToCategory(chatID int64, categoryID int) error
+	UnsubscribeFromCategory(chatID int64, categoryID int) error
+	SubscribeToStore(chatID int64, storeID int) error
+	UnsubscribeFromStore(chatID int64, storeID int) error
+	GetSubscribedCategories(chatID int64) ([]int, error)
+	GetSubscribedStores(chatID int64) ([]int, error)
+	GetAllCategories() ([]model.Category, error)
+	GetAllStores() ([]model.Store, error)
+	SetNotificationSchedule(chatID int64, schedule string) error
+	GetNotificationSchedule(chatID int64) (string, error)
+	GetChatsBySchedule(schedule string) ([]int64, error)
+	GetChat() ([]int64, error)
 }
 
 type Config struct {
@@ -138,6 +152,8 @@ func (s *SNBot) read(message *tgbotapi.Message) error {
 		if err != nil {
 			return err
 		}
+	case "settings":
+		s.sendSettingsMenu(message.Chat.ID)
 	default:
 		msg = info
 		s.Send(message.Chat.ID, msg)
@@ -147,6 +163,10 @@ func (s *SNBot) read(message *tgbotapi.Message) error {
 
 func (s *SNBot) Run() {
 	for u := range s.upd {
+		if u.CallbackQuery != nil {
+			s.handleCallback(u.CallbackQuery)
+			continue
+		}
 		if u.Message == nil {
 			continue
 		}
@@ -157,6 +177,213 @@ func (s *SNBot) Run() {
 		}
 
 	}
+}
+
+func (s *SNBot) handleCallback(cb *tgbotapi.CallbackQuery) {
+	chatID := cb.Message.Chat.ID
+	data := cb.Data
+
+	switch {
+	case data == "settings_main":
+		s.sendSettingsMenu(chatID)
+	case data == "settings_cats":
+		s.sendCategoriesMenu(chatID)
+	case data == "settings_stores":
+		s.sendStoresMenu(chatID)
+	case strings.HasPrefix(data, "sub_cat_"):
+		id, _ := strconv.Atoi(strings.TrimPrefix(data, "sub_cat_"))
+		s.toggleCategorySubscription(chatID, id)
+		s.sendCategoriesMenu(chatID) // refresh
+	case strings.HasPrefix(data, "sub_store_"):
+		id, _ := strconv.Atoi(strings.TrimPrefix(data, "sub_store_"))
+		s.toggleStoreSubscription(chatID, id)
+		s.sendStoresMenu(chatID) // refresh
+	case data == "settings_time":
+		s.sendTimeMenu(chatID)
+	case strings.HasPrefix(data, "set_time_"):
+		schedule := strings.TrimPrefix(data, "set_time_")
+		s.cfg.Storage.SetNotificationSchedule(chatID, schedule)
+		s.sendTimeMenu(chatID) // refresh
+	}
+
+	// Answer callback to stop loading animation
+	s.bot.AnswerCallbackQuery(tgbotapi.NewCallback(cb.ID, ""))
+}
+
+func (s *SNBot) sendSettingsMenu(chatID int64) {
+	msg := tgbotapi.NewMessage(chatID, "⚙️ Настройки бота\nВыберите, что хотите настроить:")
+	kbd := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🗂 Категории", "settings_cats"),
+			tgbotapi.NewInlineKeyboardButtonData("🏪 Магазины", "settings_stores"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⏰ Время уведомлений", "settings_time"),
+		),
+	)
+	msg.ReplyMarkup = kbd
+	s.bot.Send(msg)
+}
+
+func (s *SNBot) sendCategoriesMenu(chatID int64) {
+	cats, err := s.cfg.Storage.GetAllCategories()
+	if err != nil {
+		s.Send(chatID, "Ошибка получения категорий")
+		return
+	}
+	subs, err := s.cfg.Storage.GetSubscribedCategories(chatID)
+	if err != nil {
+		s.Send(chatID, "Ошибка получения подписок")
+		return
+	}
+
+	subMap := make(map[int]bool)
+	for _, id := range subs {
+		subMap[id] = true
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+
+	for i, cat := range cats {
+		label := cat.Name
+		if subMap[cat.ID] {
+			label = "✅ " + label
+		} else {
+			label = "❌ " + label
+		}
+		btn := tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("sub_cat_%d", cat.ID))
+		row = append(row, btn)
+
+		if (i+1)%2 == 0 || i == len(cats)-1 {
+			rows = append(rows, row)
+			row = []tgbotapi.InlineKeyboardButton{}
+		}
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_main"),
+	))
+
+	msg := tgbotapi.NewMessage(chatID, "Выберите категории для подписки:")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	s.bot.Send(msg)
+}
+
+func (s *SNBot) sendStoresMenu(chatID int64) {
+	stores, err := s.cfg.Storage.GetAllStores()
+	if err != nil {
+		s.Send(chatID, "Ошибка получения магазинов")
+		return
+	}
+	subs, err := s.cfg.Storage.GetSubscribedStores(chatID)
+	if err != nil {
+		s.Send(chatID, "Ошибка получения подписок")
+		return
+	}
+
+	subMap := make(map[int]bool)
+	for _, id := range subs {
+		subMap[id] = true
+	}
+
+	// For stores, list might be long. Ideally pagination, but for now simple list.
+	// Limit to top 50 to avoid hitting limits? Or just show all if small.
+	// Let's assume < 100 stores for now.
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+
+	for i, st := range stores {
+		label := st.Name
+		if subMap[st.ID] {
+			label = "✅ " + label
+		} else {
+			label = "❌ " + label
+		}
+		btn := tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("sub_store_%d", st.ID))
+		row = append(row, btn)
+
+		if (i+1)%2 == 0 || i == len(stores)-1 {
+			rows = append(rows, row)
+			row = []tgbotapi.InlineKeyboardButton{}
+		}
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_main"),
+	))
+
+	msg := tgbotapi.NewMessage(chatID, "Выберите магазины для подписки:")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	s.bot.Send(msg)
+}
+
+func (s *SNBot) toggleCategorySubscription(chatID int64, catID int) {
+	subs, _ := s.cfg.Storage.GetSubscribedCategories(chatID)
+	isSub := false
+	for _, id := range subs {
+		if id == catID {
+			isSub = true
+			break
+		}
+	}
+	if isSub {
+		s.cfg.Storage.UnsubscribeFromCategory(chatID, catID)
+	} else {
+		s.cfg.Storage.SubscribeToCategory(chatID, catID)
+	}
+}
+
+func (s *SNBot) toggleStoreSubscription(chatID int64, storeID int) {
+	subs, _ := s.cfg.Storage.GetSubscribedStores(chatID)
+	isSub := false
+	for _, id := range subs {
+		if id == storeID {
+			isSub = true
+			break
+		}
+	}
+	if isSub {
+		s.cfg.Storage.UnsubscribeFromStore(chatID, storeID)
+	} else {
+		s.cfg.Storage.SubscribeToStore(chatID, storeID)
+	}
+}
+
+func (s *SNBot) sendTimeMenu(chatID int64) {
+	sched, err := s.cfg.Storage.GetNotificationSchedule(chatID)
+	if err != nil {
+		s.Send(chatID, "Ошибка получения настроек")
+		return
+	}
+
+	labelImm := "Сразу при поступлении"
+	label18 := "Каждый день в 18:00"
+
+	if sched == "immediate" {
+		labelImm = "✅ " + labelImm
+		label18 = "❌ " + label18
+	} else {
+		labelImm = "❌ " + labelImm
+		label18 = "✅ " + label18
+	}
+
+	kbd := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(labelImm, "set_time_immediate"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label18, "set_time_18:00"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_main"),
+		),
+	)
+
+	msg := tgbotapi.NewMessage(chatID, "Выберите режим получения уведомлений:")
+	msg.ReplyMarkup = kbd
+	s.bot.Send(msg)
 }
 
 func (s *SNBot) Send(chatID int64, msg string) error {

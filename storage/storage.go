@@ -105,32 +105,129 @@ func (s *Storage) NewMessage(msg *tgbotapi.Message) error {
 	return err
 }
 
-func (s *Storage) GetNotUseCoupon(cid int64) ([]model.Coupon, error) {
-	var rr []model.Coupon
-	var t = time.Now().AddDate(0, 0, -1).Unix()
-	err := s.db.Select(&rr, `
-		SELECT c.*
-		FROM coupons c
-		LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
-		WHERE (rcc.status = FALSE OR rcc.status IS NULL) AND c.expiry_date > $2
-		LIMIT 5
-	`, cid, t)
-	if err != nil {
-		return nil, err
+func (s *Storage) SetNotificationSchedule(chatID int64, schedule string) error {
+	_, err := s.db.Exec(`UPDATE chats SET notification_schedule = $1 WHERE id = $2`, schedule, chatID)
+	return err
+}
+
+func (s *Storage) GetNotificationSchedule(chatID int64) (string, error) {
+	var schedule string
+	err := s.db.Get(&schedule, `SELECT notification_schedule FROM chats WHERE id = $1`, chatID)
+	// Default to 18:00 if null or empty (though default in DB is '18:00')
+	if schedule == "" {
+		return "18:00", nil
 	}
-	return rr, nil
+	return schedule, err
+}
+
+// SubscribeToCategory subscribes a user to a category
+func (s *Storage) SubscribeToCategory(chatID int64, categoryID int) error {
+	_, err := s.db.Exec(`
+		INSERT INTO subscriptions (chat_id, category_id)
+		VALUES ($1, $2)
+		ON CONFLICT (chat_id, category_id, store_id) DO NOTHING
+	`, chatID, categoryID)
+	return err
+}
+
+// UnsubscribeFromCategory unsubscribes a user from a category
+func (s *Storage) UnsubscribeFromCategory(chatID int64, categoryID int) error {
+	_, err := s.db.Exec(`DELETE FROM subscriptions WHERE chat_id = $1 AND category_id = $2`, chatID, categoryID)
+	return err
+}
+
+// SubscribeToStore subscribes a user to a store
+func (s *Storage) SubscribeToStore(chatID int64, storeID int) error {
+	_, err := s.db.Exec(`
+		INSERT INTO subscriptions (chat_id, store_id)
+		VALUES ($1, $2)
+		ON CONFLICT (chat_id, category_id, store_id) DO NOTHING
+	`, chatID, storeID)
+	return err
+}
+
+// UnsubscribeFromStore unsubscribes a user from a store
+func (s *Storage) UnsubscribeFromStore(chatID int64, storeID int) error {
+	_, err := s.db.Exec(`DELETE FROM subscriptions WHERE chat_id = $1 AND store_id = $2`, chatID, storeID)
+	return err
+}
+
+// GetSubscribedCategories returns IDs of categories the user is subscribed to
+func (s *Storage) GetSubscribedCategories(chatID int64) ([]int, error) {
+	var ids []int
+	err := s.db.Select(&ids, `SELECT category_id FROM subscriptions WHERE chat_id = $1 AND category_id IS NOT NULL`, chatID)
+	return ids, err
+}
+
+// GetSubscribedStores returns IDs of stores the user is subscribed to
+func (s *Storage) GetSubscribedStores(chatID int64) ([]int, error) {
+	var ids []int
+	err := s.db.Select(&ids, `SELECT store_id FROM subscriptions WHERE chat_id = $1 AND store_id IS NOT NULL`, chatID)
+	return ids, err
+}
+
+// GetAllCategories returns all available categories
+func (s *Storage) GetAllCategories() ([]model.Category, error) {
+	var cats []model.Category
+	err := s.db.Select(&cats, `SELECT * FROM categories ORDER BY name`)
+	return cats, err
+}
+
+// GetAllStores returns all available stores
+func (s *Storage) GetAllStores() ([]model.Store, error) {
+	var stores []model.Store
+	err := s.db.Select(&stores, `SELECT * FROM stores ORDER BY name`)
+	return stores, err
+}
+
+func (s *Storage) GetNotUseCoupon(cid int64) ([]model.Coupon, error) {
+	return s.GetNotUseCouponCount(cid, 5)
 }
 
 func (s *Storage) GetNotUseCouponCount(cid, count int64) ([]model.Coupon, error) {
 	var rr []model.Coupon
 	var t = time.Now().AddDate(0, 0, -1).Unix()
-	err := s.db.Select(&rr, `
-		SELECT c.*
-		FROM coupons c
-		LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
-		WHERE (rcc.status = FALSE OR rcc.status IS NULL) AND c.expiry_date > $2
-		LIMIT $3
-	`, cid, t, count)
+
+	// Check if user has any subscriptions
+	var subCount int
+	err := s.db.Get(&subCount, `SELECT count(*) FROM subscriptions WHERE chat_id = $1`, cid)
+	if err != nil {
+		return nil, err
+	}
+
+	var query string
+	var args []interface{}
+
+	if subCount > 0 {
+		// Filter by subscriptions (Category OR Store)
+		query = `
+			SELECT DISTINCT c.*
+			FROM coupons c
+			LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
+			LEFT JOIN stores s ON c.store_id = s.id
+			WHERE (rcc.status = FALSE OR rcc.status IS NULL) 
+			  AND c.expiry_date > $2
+			  AND (
+			      s.category_id IN (SELECT category_id FROM subscriptions WHERE chat_id = $1 AND category_id IS NOT NULL)
+			      OR
+			      c.store_id IN (SELECT store_id FROM subscriptions WHERE chat_id = $1 AND store_id IS NOT NULL)
+			  )
+			LIMIT $3
+		`
+		args = []interface{}{cid, t, count}
+	} else {
+		// No subscriptions -> Return ALL (Legacy behavior)
+		query = `
+			SELECT c.*
+			FROM coupons c
+			LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
+			WHERE (rcc.status = FALSE OR rcc.status IS NULL) AND c.expiry_date > $2
+			LIMIT $3
+		`
+		args = []interface{}{cid, t, count}
+	}
+
+	err = s.db.Select(&rr, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -154,12 +251,42 @@ func (s *Storage) MarkSentNotification(id int64) error {
 func (s *Storage) CountNotUseCoupon(cid int64) (uint64, error) {
 	var cnt uint64
 	var t = time.Now().AddDate(0, 0, -1).Unix()
-	err := s.db.Get(&cnt, `
-		SELECT count(c.id)
-		FROM coupons c
-		LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
-		WHERE (rcc.status = FALSE OR rcc.status IS NULL) AND c.expiry_date > $2
-	`, cid, t)
+
+	var subCount int
+	err := s.db.Get(&subCount, `SELECT count(*) FROM subscriptions WHERE chat_id = $1`, cid)
+	if err != nil {
+		return 0, err
+	}
+
+	var query string
+	var args []interface{}
+
+	if subCount > 0 {
+		query = `
+			SELECT count(DISTINCT c.id)
+			FROM coupons c
+			LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
+			LEFT JOIN stores s ON c.store_id = s.id
+			WHERE (rcc.status = FALSE OR rcc.status IS NULL) 
+			  AND c.expiry_date > $2
+			  AND (
+			      s.category_id IN (SELECT category_id FROM subscriptions WHERE chat_id = $1 AND category_id IS NOT NULL)
+			      OR
+			      c.store_id IN (SELECT store_id FROM subscriptions WHERE chat_id = $1 AND store_id IS NOT NULL)
+			  )
+		`
+		args = []interface{}{cid, t}
+	} else {
+		query = `
+			SELECT count(c.id)
+			FROM coupons c
+			LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
+			WHERE (rcc.status = FALSE OR rcc.status IS NULL) AND c.expiry_date > $2
+		`
+		args = []interface{}{cid, t}
+	}
+
+	err = s.db.Get(&cnt, query, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -182,6 +309,11 @@ func (s *Storage) MarkAsRead(cid int64, rr []model.Coupon) error {
 
 func (s *Storage) GetChat() (a []int64, err error) {
 	err = s.db.Select(&a, `SELECT id FROM chats WHERE active = true`)
+	return
+}
+
+func (s *Storage) GetChatsBySchedule(schedule string) (a []int64, err error) {
+	err = s.db.Select(&a, `SELECT id FROM chats WHERE active = true AND notification_schedule = $1`, schedule)
 	return
 }
 

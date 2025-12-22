@@ -112,7 +112,22 @@ func main() {
 		level.Error(logger).Log("msg", "failed initial collection", "err", err)
 	}
 
-	gocron.Every(1).Days().At(cfg.TimeToSend).Do(task, sn, s, c, logger)
+	// Schedule:
+	// 1. Collection every 15 minutes
+	gocron.Every(15).Minutes().Do(func() {
+		collectTask(c, logger)
+	})
+
+	// 2. Notify users with 'immediate' schedule every 15 minutes (after collection)
+	gocron.Every(15).Minutes().Do(func() {
+		notifyTask(sn, s, logger, "immediate")
+	})
+
+	// 3. Notify users with '18:00' schedule daily at configured time
+	gocron.Every(1).Days().At(cfg.TimeToSend).Do(func() {
+		notifyTask(sn, s, logger, "18:00")
+	})
+
 	cronCh := gocron.Start()
 
 	cl := make(chan os.Signal, 1)
@@ -125,15 +140,22 @@ func main() {
 	level.Info(logger).Log("msg", "goodbye")
 }
 
-func task(bot *snbot.SNBot, s *storage.Storage, c *collector.Collector, logger kitlog.Logger) {
+func collectTask(c *collector.Collector, logger kitlog.Logger) {
+	level.Info(logger).Log("msg", "starting scheduled collection")
 	if err := c.CollectAll(); err != nil {
 		level.Error(logger).Log("msg", "failed scheduled collection", "err", err)
 	}
+}
 
-	chats, err := s.GetChat()
+func notifyTask(bot *snbot.SNBot, s *storage.Storage, logger kitlog.Logger, schedule string) {
+	level.Info(logger).Log("msg", "starting notification task", "schedule", schedule)
+
+	chats, err := s.GetChatsBySchedule(schedule)
 	if err != nil {
 		level.Error(logger).Log("msg", "failed get chats", "err", err)
+		return
 	}
+
 	for _, id := range chats {
 		err := bot.SendCoupons(id, "", snbot.Daily)
 		if err != nil {
@@ -141,5 +163,5 @@ func task(bot *snbot.SNBot, s *storage.Storage, c *collector.Collector, logger k
 			continue
 		}
 	}
-	level.Info(logger).Log("msg", "send all chats new coupons")
+	level.Info(logger).Log("msg", "finished notification task", "schedule", schedule, "chats_count", len(chats))
 }
