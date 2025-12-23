@@ -49,6 +49,8 @@ start.sh
 cmd/gen_migration
 cmd/inspect_sqlite
 
+
+
 CHANGELOG.md
 changelog.md
 migration/migrate_users.sql

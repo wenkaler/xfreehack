@@ -10,9 +10,10 @@ type Notification struct {
 }
 
 type Category struct {
-	ID   int    `db:"id"`
-	Name string `db:"name"`
-	Slug string `db:"slug"`
+	ID    int    `db:"id"`
+	Name  string `db:"name"`
+	Slug  string `db:"slug"`
+	Count int    `db:"count"`
 }
 
 type Store struct {
@@ -21,6 +22,7 @@ type Store struct {
 	Name       string `db:"name"`
 	Slug       string `db:"slug"`
 	URL        string `db:"url"`
+	Count      int    `db:"count"`
 }
 
 type Coupon struct {

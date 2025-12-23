@@ -39,9 +39,12 @@ type Storage interface {
 	GetSubscribedCategories(chatID int64) ([]int, error)
 	GetSubscribedStores(chatID int64) ([]int, error)
 	GetAllCategories() ([]model.Category, error)
+	GetCategoriesWithCoupons() ([]model.Category, error)
 	GetAllStores() ([]model.Store, error)
+	GetStoresWithCoupons(categoryID int) ([]model.Store, error)
 	GetStoresByCategory(categoryID int) ([]model.Store, error)
 	GetStore(storeID int) (*model.Store, error)
+	GetStoreCoupons(storeID int, count int64) ([]model.Coupon, error)
 	SetNotificationSchedule(chatID int64, schedule string) error
 	GetNotificationSchedule(chatID int64) (string, error)
 	GetChatsBySchedule(schedule string) ([]int64, error)
@@ -199,21 +202,53 @@ func (s *SNBot) handleCallback(cb *tgbotapi.CallbackQuery) {
 	switch {
 	case data == "settings_main":
 		s.sendSettingsMenu(chatID)
-	case data == "settings_cats":
-		s.sendCategoriesMenu(chatID)
-	case data == "settings_stores":
-		s.sendStoresCategoriesMenu(chatID)
-	case strings.HasPrefix(data, "settings_stores_cat_"):
-		catID, _ := strconv.Atoi(strings.TrimPrefix(data, "settings_stores_cat_"))
-		s.sendStoresMenu(chatID, catID)
-	case strings.HasPrefix(data, "sub_cat_"):
-		id, _ := strconv.Atoi(strings.TrimPrefix(data, "sub_cat_"))
-		s.toggleCategorySubscription(chatID, id)
-		s.sendCategoriesMenu(chatID) // refresh
-	case strings.HasPrefix(data, "sub_store_"):
-		id, _ := strconv.Atoi(strings.TrimPrefix(data, "sub_store_"))
-		s.toggleStoreSubscription(chatID, id)
-		// s.sendStoresMenu(chatID) // refresh handled inside toggleStoreSubscription
+
+	// --- My Subscriptions ---
+	case data == "settings_my_subs":
+		s.sendMySubscriptions(chatID)
+	case strings.HasPrefix(data, "unsub_cat_"):
+		id, _ := strconv.Atoi(strings.TrimPrefix(data, "unsub_cat_"))
+		s.cfg.Storage.UnsubscribeFromCategory(chatID, id)
+		s.sendMySubscriptions(chatID)
+	case strings.HasPrefix(data, "unsub_store_"):
+		id, _ := strconv.Atoi(strings.TrimPrefix(data, "unsub_store_"))
+		s.cfg.Storage.UnsubscribeFromStore(chatID, id)
+		s.sendMySubscriptions(chatID)
+
+	// --- Add Subscription ---
+	case data == "settings_add_sub":
+		s.sendAddSubscriptionMenu(chatID)
+	case data == "add_sub_cat":
+		s.sendAddSubCategories(chatID)
+	case strings.HasPrefix(data, "do_sub_cat_"):
+		id, _ := strconv.Atoi(strings.TrimPrefix(data, "do_sub_cat_"))
+		s.cfg.Storage.SubscribeToCategory(chatID, id)
+		s.sendAddSubCategories(chatID) // refresh
+	case data == "add_sub_store_cats":
+		s.sendAddSubStoreCategories(chatID)
+	case strings.HasPrefix(data, "add_sub_store_list_"):
+		catID, _ := strconv.Atoi(strings.TrimPrefix(data, "add_sub_store_list_"))
+		s.sendAddSubStores(chatID, catID)
+	case strings.HasPrefix(data, "do_sub_store_"):
+		id, _ := strconv.Atoi(strings.TrimPrefix(data, "do_sub_store_"))
+		s.cfg.Storage.SubscribeToStore(chatID, id)
+		// refresh store list, need catID. Retrieve store to get catID
+		st, _ := s.cfg.Storage.GetStore(id)
+		if st != nil {
+			s.sendAddSubStores(chatID, st.CategoryID)
+		}
+
+	// --- Coupons Browser ---
+	case data == "browser_main":
+		s.sendCouponsBrowser(chatID)
+	case strings.HasPrefix(data, "browser_cat_"):
+		catID, _ := strconv.Atoi(strings.TrimPrefix(data, "browser_cat_"))
+		s.sendCouponsBrowserStores(chatID, catID)
+	case strings.HasPrefix(data, "browser_print_store_"):
+		storeID, _ := strconv.Atoi(strings.TrimPrefix(data, "browser_print_store_"))
+		s.printStoreCoupons(chatID, storeID)
+
+	// --- Time Settings ---
 	case data == "settings_time":
 		s.sendTimeMenu(chatID)
 	case strings.HasPrefix(data, "set_time_"):
@@ -229,11 +264,14 @@ func (s *SNBot) handleCallback(cb *tgbotapi.CallbackQuery) {
 }
 
 func (s *SNBot) sendSettingsMenu(chatID int64) {
-	msg := tgbotapi.NewMessage(chatID, "⚙️ Настройки бота\nВыберите, что хотите настроить:")
+	msg := tgbotapi.NewMessage(chatID, "⚙️ Настройки бота")
 	kbd := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🗂 Категории", "settings_cats"),
-			tgbotapi.NewInlineKeyboardButtonData("🏪 Магазины", "settings_stores"),
+			tgbotapi.NewInlineKeyboardButtonData("⭐️ Мои подписки", "settings_my_subs"),
+			tgbotapi.NewInlineKeyboardButtonData("➕ Добавить подписку", "settings_add_sub"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🏷️ Браузер купонов", "browser_main"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⏰ Время уведомлений", "settings_time"),
@@ -243,164 +281,285 @@ func (s *SNBot) sendSettingsMenu(chatID int64) {
 	s.bot.Send(msg)
 }
 
-func (s *SNBot) sendCategoriesMenu(chatID int64) {
-	cats, err := s.cfg.Storage.GetAllCategories()
-	if err != nil {
-		s.Send(chatID, "Ошибка получения категорий")
-		return
-	}
-	subs, err := s.cfg.Storage.GetSubscribedCategories(chatID)
-	if err != nil {
-		s.Send(chatID, "Ошибка получения подписок")
-		return
-	}
-
-	subMap := make(map[int]bool)
-	for _, id := range subs {
-		subMap[id] = true
-	}
+func (s *SNBot) sendMySubscriptions(chatID int64) {
+	catIds, _ := s.cfg.Storage.GetSubscribedCategories(chatID)
+	storeIds, _ := s.cfg.Storage.GetSubscribedStores(chatID)
+	catsAll, _ := s.cfg.Storage.GetAllCategories()
+	storesAll, _ := s.cfg.Storage.GetAllStores()
 
 	var rows [][]tgbotapi.InlineKeyboardButton
-	var row []tgbotapi.InlineKeyboardButton
 
-	for i, cat := range cats {
-		label := cat.Name
-		// Inverted logic: Show action to take
-		if subMap[cat.ID] {
-			label = "❌ " + label // Already subbed -> Show Unsubscribe action
-		} else {
-			label = "✅ " + label // Not subbed -> Show Subscribe action
+	// Categories
+	for _, cid := range catIds {
+		var name string
+		for _, c := range catsAll {
+			if c.ID == cid {
+				name = c.Name
+				break
+			}
 		}
-		btn := tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("sub_cat_%d", cat.ID))
-		row = append(row, btn)
+		if name != "" {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("➖ "+name, fmt.Sprintf("unsub_cat_%d", cid)),
+			))
+		}
+	}
 
-		if (i+1)%2 == 0 || i == len(cats)-1 {
-			rows = append(rows, row)
-			row = []tgbotapi.InlineKeyboardButton{}
+	// Stores
+	for _, sid := range storeIds {
+		var name string
+		for _, st := range storesAll {
+			if st.ID == sid {
+				name = st.Name
+				break
+			}
 		}
+		if name != "" {
+			rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("➖ "+name, fmt.Sprintf("unsub_store_%d", sid)),
+			))
+		}
+	}
+
+	if len(rows) == 0 {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📭 У вас нет активных подписок", "noop"),
+		))
 	}
 
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_main"),
 	))
 
-	msg := tgbotapi.NewMessage(chatID, "Выберите категории для подписки:")
+	msg := tgbotapi.NewMessage(chatID, "Ваши подписки (нажмите для отписки):")
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	s.bot.Send(msg)
 }
 
-func (s *SNBot) sendStoresCategoriesMenu(chatID int64) {
-	// First level of store navigation: Select Category
-	cats, err := s.cfg.Storage.GetAllCategories()
-	if err != nil {
-		s.Send(chatID, "Ошибка получения категорий")
-		return
-	}
-
-	var rows [][]tgbotapi.InlineKeyboardButton
-	var row []tgbotapi.InlineKeyboardButton
-
-	for i, cat := range cats {
-		btn := tgbotapi.NewInlineKeyboardButtonData("📂 "+cat.Name, fmt.Sprintf("settings_stores_cat_%d", cat.ID))
-		row = append(row, btn)
-
-		if (i+1)%2 == 0 || i == len(cats)-1 {
-			rows = append(rows, row)
-			row = []tgbotapi.InlineKeyboardButton{}
-		}
-	}
-
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_main"),
-	))
-
-	msg := tgbotapi.NewMessage(chatID, "Выберите категорию магазинов:")
-	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+func (s *SNBot) sendAddSubscriptionMenu(chatID int64) {
+	msg := tgbotapi.NewMessage(chatID, "➕ Добавить подписку")
+	kbd := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🗂 Категории", "add_sub_cat"),
+			tgbotapi.NewInlineKeyboardButtonData("🏪 Магазины", "add_sub_store_cats"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_main"),
+		),
+	)
+	msg.ReplyMarkup = kbd
 	s.bot.Send(msg)
 }
 
-func (s *SNBot) sendStoresMenu(chatID int64, categoryID int) {
-	stores, err := s.cfg.Storage.GetStoresByCategory(categoryID)
-	if err != nil {
-		s.Send(chatID, "Ошибка получения магазинов")
-		return
-	}
-	subs, err := s.cfg.Storage.GetSubscribedStores(chatID)
-	if err != nil {
-		s.Send(chatID, "Ошибка получения подписок")
-		return
-	}
-
-	subMap := make(map[int]bool)
-	for _, id := range subs {
-		subMap[id] = true
-	}
-
-	var rows [][]tgbotapi.InlineKeyboardButton
-	var row []tgbotapi.InlineKeyboardButton
-
-	for i, st := range stores {
-		label := st.Name
-		if subMap[st.ID] {
-			label = "❌ " + label // Inverted: Action to Unsubscribe
-		} else {
-			label = "✅ " + label // Inverted: Action to Subscribe
-		}
-		btn := tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("sub_store_%d", st.ID))
-		row = append(row, btn)
-
-		if (i+1)%2 == 0 || i == len(stores)-1 {
-			rows = append(rows, row)
-			row = []tgbotapi.InlineKeyboardButton{}
-		}
-	}
-
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_stores"),
-	))
-
-	msg := tgbotapi.NewMessage(chatID, "Выберите магазины для подписки:")
-	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
-	s.bot.Send(msg)
-}
-
-func (s *SNBot) toggleCategorySubscription(chatID int64, catID int) {
+func (s *SNBot) sendAddSubCategories(chatID int64) {
+	cats, _ := s.cfg.Storage.GetCategoriesWithCoupons()
 	subs, _ := s.cfg.Storage.GetSubscribedCategories(chatID)
-	isSub := false
+	subMap := make(map[int]bool)
 	for _, id := range subs {
-		if id == catID {
-			isSub = true
-			break
+		subMap[id] = true
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+
+	count := 0
+	for _, cat := range cats {
+		if subMap[cat.ID] {
+			continue // Already subscribed
+		}
+		btn := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("✅ %s (%d)", cat.Name, cat.Count), fmt.Sprintf("do_sub_cat_%d", cat.ID))
+		row = append(row, btn)
+		count++
+		if count%2 == 0 {
+			rows = append(rows, row)
+			row = []tgbotapi.InlineKeyboardButton{}
 		}
 	}
-	if isSub {
-		s.cfg.Storage.UnsubscribeFromCategory(chatID, catID)
-	} else {
-		s.cfg.Storage.SubscribeToCategory(chatID, catID)
+	if len(row) > 0 {
+		rows = append(rows, row)
 	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_add_sub"),
+	))
+
+	msg := tgbotapi.NewMessage(chatID, "Выберите категорию для подписки:")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	s.bot.Send(msg)
 }
 
-func (s *SNBot) toggleStoreSubscription(chatID int64, storeID int) {
-	subs, _ := s.cfg.Storage.GetSubscribedStores(chatID)
-	isSub := false
+func (s *SNBot) sendAddSubStoreCategories(chatID int64) {
+	cats, _ := s.cfg.Storage.GetCategoriesWithCoupons()
+	// Filter: Don't show category if user is ALREADY subscribed to it (logic: if subbed to cat, don't need store sub)
+	subs, _ := s.cfg.Storage.GetSubscribedCategories(chatID)
+	subMap := make(map[int]bool)
 	for _, id := range subs {
-		if id == storeID {
-			isSub = true
-			break
-		}
-	}
-	if isSub {
-		s.cfg.Storage.UnsubscribeFromStore(chatID, storeID)
-	} else {
-		s.cfg.Storage.SubscribeToStore(chatID, storeID)
+		subMap[id] = true
 	}
 
-	// Refresh the menu
-	// Retrieve store to get CategoryID
-	store, err := s.cfg.Storage.GetStore(storeID)
-	if err == nil {
-		s.sendStoresMenu(chatID, store.CategoryID)
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+
+	count := 0
+	for _, cat := range cats {
+		if subMap[cat.ID] {
+			continue
+		}
+		btn := tgbotapi.NewInlineKeyboardButtonData("📂 "+cat.Name, fmt.Sprintf("add_sub_store_list_%d", cat.ID))
+		row = append(row, btn)
+		count++
+		if count%2 == 0 {
+			rows = append(rows, row)
+			row = []tgbotapi.InlineKeyboardButton{}
+		}
 	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_add_sub"),
+	))
+
+	msg := tgbotapi.NewMessage(chatID, "Выберите категорию магазина:")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	s.bot.Send(msg)
+}
+
+func (s *SNBot) sendAddSubStores(chatID int64, catID int) {
+	stores, _ := s.cfg.Storage.GetStoresWithCoupons(catID) // Only stores with coupons
+	subs, _ := s.cfg.Storage.GetSubscribedStores(chatID)
+	subMap := make(map[int]bool)
+	for _, id := range subs {
+		subMap[id] = true
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+
+	count := 0
+	for _, st := range stores {
+		if subMap[st.ID] {
+			continue
+		}
+		btn := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("✅ %s (%d)", st.Name, st.Count), fmt.Sprintf("do_sub_store_%d", st.ID))
+		row = append(row, btn)
+		count++
+		if count%2 == 0 {
+			rows = append(rows, row)
+			row = []tgbotapi.InlineKeyboardButton{}
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "add_sub_store_cats"),
+	))
+
+	msg := tgbotapi.NewMessage(chatID, "Выберите магазин для подписки:")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	s.bot.Send(msg)
+}
+
+func (s *SNBot) sendCouponsBrowser(chatID int64) {
+	cats, _ := s.cfg.Storage.GetCategoriesWithCoupons()
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+
+	count := 0
+	for _, cat := range cats {
+		btn := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("📂 %s (%d)", cat.Name, cat.Count), fmt.Sprintf("browser_cat_%d", cat.ID))
+		row = append(row, btn)
+		count++
+		if count%2 == 0 {
+			rows = append(rows, row)
+			row = []tgbotapi.InlineKeyboardButton{}
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Главное меню", "settings_main"),
+	))
+
+	msg := tgbotapi.NewMessage(chatID, "🏷️ Браузер купонов (Категории):")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	s.bot.Send(msg)
+}
+
+func (s *SNBot) sendCouponsBrowserStores(chatID int64, catID int) {
+	stores, _ := s.cfg.Storage.GetStoresWithCoupons(catID)
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+
+	count := 0
+	for _, st := range stores {
+		btn := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("🏪 %s (%d)", st.Name, st.Count), fmt.Sprintf("browser_print_store_%d", st.ID))
+		row = append(row, btn)
+		count++
+		if count%2 == 0 {
+			rows = append(rows, row)
+			row = []tgbotapi.InlineKeyboardButton{}
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "browser_main"),
+	))
+
+	msg := tgbotapi.NewMessage(chatID, "Выберите магазин для просмотра купонов:")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	s.bot.Send(msg)
+}
+
+func (s *SNBot) printStoreCoupons(chatID int64, storeID int) {
+	store, _ := s.cfg.Storage.GetStore(storeID)
+	// Default 5 coupons or all? Let's show 5.
+	coupons, err := s.cfg.Storage.GetStoreCoupons(storeID, 5)
+	if err != nil {
+		s.Send(chatID, "Ошибка получения купонов")
+		return
+	}
+	if len(coupons) == 0 {
+		s.Send(chatID, "Купоны не найдены")
+		return
+	}
+
+	var msg string
+	msg = fmt.Sprintf("🏷️ Купоны магазина %s:\n\n", store.Name)
+	for i, rec := range coupons {
+		code := rec.Code
+		if code == "[автокод]" {
+			code = "Не требуется (автоматически)"
+		}
+		expiry := "Не указано"
+		if rec.ExpiryDate > 0 {
+			expiry = time.Unix(rec.ExpiryDate, 0).Format("02.01.2006")
+		}
+		msg += fmt.Sprintf("%d. %s\nКод: `%s`\nДействует до: %s\n\n", i+1, rec.Description, code, expiry)
+		msg += fmt.Sprintf("🔗 [Перейти к скидке](%s)\n\n", rec.Link)
+	}
+
+	// Mark as read? Maybe. For now just show.
+	m := tgbotapi.NewMessage(chatID, msg)
+	m.ParseMode = "Markdown"
+	// Keep the browser menu open?
+	kbd := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔙 К магазинам", fmt.Sprintf("browser_cat_%d", store.CategoryID)),
+		),
+	)
+	m.ReplyMarkup = kbd
+	s.bot.Send(m)
 }
 
 func (s *SNBot) sendTimeMenu(chatID int64) {
@@ -441,7 +600,10 @@ func (s *SNBot) sendTimeMenu(chatID int64) {
 func (s *SNBot) Send(chatID int64, msg string) error {
 	level.Error(s.cfg.Logger).Log("msg", "try send", "chatID", chatID)
 	m := tgbotapi.NewMessage(chatID, msg)
-	m.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
+	// Remove persistence keyboard logic again just in case, though we use NewRemoveKeyboard only when needed.
+	// Actually we should NOT NewRemoveKeyboard always if we are in inline menu flow.
+	// But standard message sending implies text response.
+	// m.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true) // We removed persistent menu earlier.
 	_, err := s.bot.Send(m)
 	if err != nil {
 		if err.Error() == errBlockedByUser {

@@ -263,6 +263,51 @@ func (s *Storage) MarkSentNotification(id int64) error {
 	return err
 }
 
+// GetCategoriesWithCoupons returns categories that have at least one store with active coupons
+func (s *Storage) GetCategoriesWithCoupons() ([]model.Category, error) {
+	var cats []model.Category
+	query := `
+		SELECT c.id, c.name, c.slug, COUNT(cp.id) as count
+		FROM categories c
+		JOIN stores s ON s.category_id = c.id
+		JOIN coupons cp ON cp.store_id = s.id
+		WHERE cp.expiry_date > $1
+		GROUP BY c.id, c.name, c.slug
+		HAVING COUNT(cp.id) > 0
+		ORDER BY c.name
+	`
+	err := s.db.Select(&cats, query, time.Now().Unix())
+	return cats, err
+}
+
+// GetStoresWithCoupons returns stores in a category that have active coupons
+func (s *Storage) GetStoresWithCoupons(categoryID int) ([]model.Store, error) {
+	var stores []model.Store
+	query := `
+		SELECT s.id, s.category_id, s.name, s.slug, s.url, COUNT(cp.id) as count
+		FROM stores s
+		JOIN coupons cp ON cp.store_id = s.id
+		WHERE s.category_id = $1 AND cp.expiry_date > $2
+		GROUP BY s.id, s.category_id, s.name, s.slug, s.url
+		HAVING COUNT(cp.id) > 0
+		ORDER BY s.name
+	`
+	err := s.db.Select(&stores, query, categoryID, time.Now().Unix())
+	return stores, err
+}
+
+func (s *Storage) GetStoreCoupons(storeID int, count int64) ([]model.Coupon, error) {
+	var rr []model.Coupon
+	var t = time.Now().AddDate(0, 0, -1).Unix()
+	query := `
+		SELECT * FROM coupons
+		WHERE store_id = $1 AND expiry_date > $2
+		LIMIT $3
+	`
+	err := s.db.Select(&rr, query, storeID, t, count)
+	return rr, err
+}
+
 func (s *Storage) CountNotUseCoupon(cid int64) (uint64, error) {
 	var cnt uint64
 	var t = time.Now().AddDate(0, 0, -1).Unix()
