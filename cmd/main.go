@@ -109,21 +109,43 @@ func main() {
 	go sn.Run()
 
 	// Run initial collection
-	if err := c.CollectAll(); err != nil {
-		level.Error(logger).Log("msg", "failed initial collection", "err", err)
+	hasRun, err := s.HasCollectionRunToday()
+	if err != nil {
+		level.Error(logger).Log("msg", "failed to check collection status", "err", err)
+	}
+	if !hasRun {
+		stats, err := c.CollectAll()
+		if err != nil {
+			level.Error(logger).Log("msg", "failed initial collection", "err", err)
+		}
+		if err := s.SaveCollectionLog(stats); err != nil {
+			level.Error(logger).Log("msg", "failed to save collection log", "err", err)
+		}
+	} else {
+		level.Info(logger).Log("msg", "skipping initial collection: already run today")
 	}
 
 	// Schedule:
 	// 1. Collection every 15 minutes
 	gocron.Every(15).Minutes().Do(func() {
-		collectTask(c, logger)
+		collectTask(c, s, logger)
 	})
 
 	// 2. Notify users based on their timezone and preferred hour (runs every 1 hour)
-	// We want to run this at the top of the hour. Gocron starts immediately.
-	// For better precision we could wait until next hour start, but for now simple interval.
-	gocron.Every(1).Hours().Do(func() {
+	// We want to run this at the top of the hour.
+	now := time.Now()
+	nextHour := now.Truncate(time.Hour).Add(time.Hour)
+	timeToWait := nextHour.Sub(now)
+
+	level.Info(logger).Log("msg", "scheduling hourly notification task", "wait_duration", timeToWait)
+
+	time.AfterFunc(timeToWait, func() {
+		// Run immediately at top of hour
 		notifyHourly(sn, s, logger)
+		// Then schedule every 1 hour
+		gocron.Every(1).Hours().Do(func() {
+			notifyHourly(sn, s, logger)
+		})
 	})
 
 	// 3. Check for system notifications every 1 minute
@@ -143,10 +165,14 @@ func main() {
 	level.Info(logger).Log("msg", "goodbye")
 }
 
-func collectTask(c *collector.Collector, logger kitlog.Logger) {
+func collectTask(c *collector.Collector, s *storage.Storage, logger kitlog.Logger) {
 	level.Info(logger).Log("msg", "starting scheduled collection")
-	if err := c.CollectAll(); err != nil {
+	stats, err := c.CollectAll()
+	if err != nil {
 		level.Error(logger).Log("msg", "failed scheduled collection", "err", err)
+	}
+	if err := s.SaveCollectionLog(stats); err != nil {
+		level.Error(logger).Log("msg", "failed to save collection log", "err", err)
 	}
 }
 

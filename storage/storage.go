@@ -87,6 +87,24 @@ func (s *Storage) LoadCollect() (map[string]model.Coupon, error) {
 	return m, nil
 }
 
+func (s *Storage) HasCollectionRunToday() (bool, error) {
+	var count int
+	err := s.db.Get(&count, `SELECT count(*) FROM collection_logs WHERE date(created_at) = date(now()) AND status = 'success'`)
+	return count > 0, err
+}
+
+func (s *Storage) SaveCollectionLog(stats model.CollectionStats) error {
+	status := "success"
+	if !stats.Success {
+		status = "failed"
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO collection_logs (status, categories_count, stores_count, coupons_count, duration_ms, error_message)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, status, stats.CategoriesCount, stats.StoresCount, stats.CouponsCount, stats.Duration.Milliseconds(), stats.ErrorMessage)
+	return err
+}
+
 func (s *Storage) NewChat(chat *tgbotapi.Chat) error {
 	_, err := s.db.Exec(`
 		INSERT INTO chats (id, type, user_name, first_name, last_name, active)
@@ -416,6 +434,15 @@ func (s *Storage) MarkAsRead(cid int64, rr []model.Coupon) error {
 func (s *Storage) GetChat() (a []int64, err error) {
 	err = s.db.Select(&a, `SELECT id FROM chats WHERE active = true`)
 	return
+}
+
+func (s *Storage) GetChatSettings(chatID int64) (*model.Chat, error) {
+	var chat model.Chat
+	err := s.db.Get(&chat, `SELECT * FROM chats WHERE id = $1`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	return &chat, nil
 }
 
 func (s *Storage) GetPendingNotifications() ([]model.Notification, error) {

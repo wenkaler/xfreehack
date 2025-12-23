@@ -54,6 +54,7 @@ type Storage interface {
 	GetUserTimezone(chatID int64) (int, error)            // New (offset)
 	GetUserNotificationHour(chatID int64) (int, error)    // New
 	GetChat() ([]int64, error)
+	GetChatSettings(chatID int64) (*model.Chat, error)
 
 	// Notifications
 	GetPendingNotifications() ([]model.Notification, error)
@@ -180,6 +181,8 @@ func (s *SNBot) read(message *tgbotapi.Message) error {
 		s.sendSettingsMenu(message.Chat.ID)
 	case "donate":
 		s.sendDonate(message.Chat.ID)
+	case "debug":
+		s.handleDebug(message)
 	default:
 		msg = info
 		s.Send(message.Chat.ID, msg)
@@ -757,4 +760,48 @@ func (s *SNBot) sendDonate(chatID int64) {
 
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(row1, row2)
 	s.bot.Send(msg)
+}
+
+func (s *SNBot) handleDebug(msg *tgbotapi.Message) {
+	args := msg.CommandArguments()
+	if strings.TrimSpace(args) == "" || strings.Split(args, " ")[0] != s.cfg.AccessToken {
+		// Silent fail or generic error to not expose it's valid command
+		// s.Send(msg.Chat.ID, "Unauthorized")
+		return
+	}
+
+	chat, err := s.cfg.Storage.GetChatSettings(msg.Chat.ID)
+	if err != nil {
+		s.Send(msg.Chat.ID, "Error getting settings: "+err.Error())
+		return
+	}
+	utc := time.Now().UTC()
+	local := utc.Add(time.Duration(chat.TimezoneOffset) * time.Hour)
+
+	// Check if notification due logic
+	// MOD((utc.Hour() + offset + 24), 24) == notification_hour
+	serverHour := utc.Hour()
+	targetHour := chat.NotificationHour
+	calcHour := (serverHour + chat.TimezoneOffset + 24) % 24
+
+	status := "❌ No match"
+	if calcHour == targetHour {
+		status = "✅ Match (Notification due now if job runs)"
+	}
+
+	text := fmt.Sprintf("🛠 *Debug Info*\n\n"+
+		"Server Time (UTC): `%s`\n"+
+		"Server Hour: `%d`\n\n"+
+		"Your Timezone: %+d\n"+
+		"Your Local Time: `%s`\n"+
+		"Notification Hour: `%02d:00`\n\n"+
+		"Calculated User Hour: `%d`\n"+
+		"Status: %s",
+		utc.Format("15:04:05"), utc.Hour(),
+		chat.TimezoneOffset, local.Format("15:04:05"),
+		chat.NotificationHour, calcHour, status)
+
+	msgConf := tgbotapi.NewMessage(msg.Chat.ID, text)
+	msgConf.ParseMode = "Markdown"
+	s.bot.Send(msgConf)
 }

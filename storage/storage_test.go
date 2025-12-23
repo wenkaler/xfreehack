@@ -367,3 +367,51 @@ func TestStorage_GetStoreCoupons_FiltersRead(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, coupons, 0)
 }
+
+func TestStorage_CollectionLogs(t *testing.T) {
+	logger := log.NewNopLogger()
+	s := &Storage{db: testDB, logger: logger}
+	_, err := testDB.Exec("TRUNCATE TABLE collection_logs CASCADE")
+	// If table doesn't exist (e.g. if init.sql didn't work), test might fail differently.
+	// But we appended to init.sql so it should be there.
+	if err != nil {
+		// Table might not exist if migration failed to apply in TestMain?
+		// We can't easily check here. But TestMain runs applyMigrations which reads init.sql.
+// If init.sql was updated before TestMain ran, it should be fine.
+// note: TestMain runs ONCE per package test run.
+// If I updated init.sql AFTER TestMain ran (in previous step), then I need to restart the test process.
+// 'go test' starts a new process, so TestMain runs again.
+// So it should pick up the updated init.sql.
+}
+
+// Initial check - should be false
+hasRun, err := s.HasCollectionRunToday()
+if err != nil {
+t.Fatalf("expected no error, got %v", err)
+}
+if hasRun {
+t.Errorf("expected hasRun=false, got true")
+}
+
+// Save log
+stats := model.CollectionStats{
+Success:         true,
+CategoriesCount: 1,
+StoresCount:     2,
+CouponsCount:    3,
+Duration:        time.Second,
+}
+err = s.SaveCollectionLog(stats)
+if err != nil {
+t.Fatalf("expected no error saving log, got %v", err)
+}
+
+// Check again - should be true
+hasRun, err = s.HasCollectionRunToday()
+if err != nil {
+t.Fatalf("expected no error, got %v", err)
+}
+if !hasRun {
+t.Errorf("expected hasRun=true, got false")
+}
+}

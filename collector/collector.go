@@ -42,17 +42,29 @@ func New(cfg *Config) *Collector {
 
 func (c *Collector) CollectFor(url string) error {
 	// Legacy support or specific trigger
-	return c.CollectAll()
+	_, err := c.CollectAll()
+	return err
 }
 
-func (c *Collector) CollectAll() error {
+func (c *Collector) CollectAll() (model.CollectionStats, error) {
+	stats := model.CollectionStats{
+		Success: true, // assume success until error
+	}
+	start := time.Now()
+	defer func() {
+		stats.Duration = time.Since(start)
+	}()
+
 	level.Info(c.cfg.Logger).Log("msg", "starting collection from lovikod.ru")
 
 	// 1. Get Categories
 	categories, err := c.parseCategories()
 	if err != nil {
-		return fmt.Errorf("failed to parse categories: %w", err)
+		stats.Success = false
+		stats.ErrorMessage = err.Error()
+		return stats, fmt.Errorf("failed to parse categories: %w", err)
 	}
+	stats.CategoriesCount = len(categories)
 
 	for _, cat := range categories {
 		level.Info(c.cfg.Logger).Log("msg", "processing category", "name", cat.Name)
@@ -69,6 +81,7 @@ func (c *Collector) CollectAll() error {
 			level.Error(c.cfg.Logger).Log("msg", "failed to parse stores", "category", cat.Name, "err", err)
 			continue
 		}
+		stats.StoresCount += len(stores)
 
 		for _, store := range stores {
 			store.CategoryID = cat.ID
@@ -86,6 +99,7 @@ func (c *Collector) CollectAll() error {
 				level.Error(c.cfg.Logger).Log("msg", "failed to parse coupons", "store", store.Name, "err", err)
 				continue
 			}
+			stats.CouponsCount += len(coupons)
 
 			for _, coupon := range coupons {
 				coupon.StoreID = store.ID
@@ -98,8 +112,8 @@ func (c *Collector) CollectAll() error {
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
-	level.Info(c.cfg.Logger).Log("msg", "collection finished")
-	return nil
+	level.Info(c.cfg.Logger).Log("msg", "collection finished", "stats", fmt.Sprintf("%+v", stats))
+	return stats, nil
 }
 
 func (c *Collector) parseCategories() ([]model.Category, error) {

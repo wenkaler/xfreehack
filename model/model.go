@@ -53,3 +53,12 @@ type Chat struct {
 	NotificationHour int       `db:"notification_hour"`
 	CreatedAt        time.Time `db:"created_at"`
 }
+
+type CollectionStats struct {
+	CategoriesCount int
+	StoresCount     int
+	CouponsCount    int
+	Duration        time.Duration
+	Success         bool
+	ErrorMessage    string
+}
