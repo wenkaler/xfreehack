@@ -83,6 +83,7 @@ func New(cfg *Config) (*SNBot, error) {
 		{Command: "start", Description: "Запустить бота 🚀"},
 		{Command: "print", Description: "Вывести купоны 🏷️"},
 		{Command: "settings", Description: "Настройки ⚙️"},
+		{Command: "donate", Description: "Поддержать автора ☕️"},
 	}
 	// Native SetMyCommands in v5
 	if _, err := bot.Request(tgbotapi.NewSetMyCommands(commands...)); err != nil {
@@ -175,6 +176,8 @@ func (s *SNBot) read(message *tgbotapi.Message) error {
 		}
 	case "settings":
 		s.sendSettingsMenu(message.Chat.ID)
+	case "donate":
+		s.sendDonate(message.Chat.ID)
 	default:
 		msg = info
 		s.Send(message.Chat.ID, msg)
@@ -268,6 +271,10 @@ func (s *SNBot) handleCallback(cb *tgbotapi.CallbackQuery) {
 		hour, _ := strconv.Atoi(strings.TrimPrefix(data, "set_hour_"))
 		s.cfg.Storage.SetUserNotificationHour(chatID, hour)
 		s.sendTimeMenu(chatID)
+
+	// --- Donation ---
+	case data == "donate_action":
+		s.sendDonate(chatID)
 	}
 
 	// Answer callback to stop loading animation
@@ -288,6 +295,9 @@ func (s *SNBot) sendSettingsMenu(chatID int64) {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⏰ Время уведомлений", "settings_time"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("☕️ Поддержать автора", "donate_action"),
 		),
 	)
 	msg.ReplyMarkup = kbd
@@ -684,4 +694,17 @@ func (s *SNBot) SendStat(chatID int64, args string) error {
 		s.Send(chatID, fmt.Sprintf("Активных пользователей в базе: %d", count))
 	}
 	return nil
+}
+
+func (s *SNBot) sendDonate(chatID int64) {
+	msg := tgbotapi.NewMessage(chatID, "Если бот оказался полезен, вы можете поддержать его развитие. Спасибо! ❤️\n\nВаша поддержка помогает оплачивать сервер и мотивирует добавлять новые функции.")
+
+	// URL button
+	btn := tgbotapi.NewInlineKeyboardButtonURL("☕️ Поддержать рублем", "https://pay.cloudtips.ru/p/b7865ee8")
+
+	row1 := tgbotapi.NewInlineKeyboardRow(btn)
+	row2 := tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_main"))
+
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(row1, row2)
+	s.bot.Send(msg)
 }
