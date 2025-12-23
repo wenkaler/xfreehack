@@ -324,15 +324,17 @@ func (s *Storage) GetStoresWithCoupons(categoryID int) ([]model.Store, error) {
 	return stores, err
 }
 
-func (s *Storage) GetStoreCoupons(storeID int, count int64) ([]model.Coupon, error) {
+func (s *Storage) GetStoreCoupons(chatID int64, storeID int, count int64) ([]model.Coupon, error) {
 	var rr []model.Coupon
 	var t = time.Now().AddDate(0, 0, -1).Unix()
 	query := `
-		SELECT * FROM coupons
-		WHERE store_id = $1 AND expiry_date > $2
-		LIMIT $3
+		SELECT c.* FROM coupons c
+		LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
+		WHERE c.store_id = $2 AND c.expiry_date > $3
+		  AND (rcc.status = FALSE OR rcc.status IS NULL)
+		LIMIT $4
 	`
-	err := s.db.Select(&rr, query, storeID, t, count)
+	err := s.db.Select(&rr, query, chatID, storeID, t, count)
 	return rr, err
 }
 

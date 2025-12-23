@@ -337,3 +337,33 @@ func TestStorage_CountNotUseCouponByStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, cnt)
 }
+
+func TestStorage_GetStoreCoupons_FiltersRead(t *testing.T) {
+	logger := log.NewNopLogger()
+	s := &Storage{db: testDB, logger: logger}
+	_, err := testDB.Exec("TRUNCATE TABLE categories, stores, coupons, chats, relation_chat_coupons CASCADE")
+	require.NoError(t, err)
+
+	catID, _ := s.SaveCategory(model.Category{Name: "CatBrowser", Slug: "catbrowser"})
+	storeID, _ := s.SaveStore(model.Store{Name: "StoreBrowser", Slug: "storebrowser", CategoryID: catID})
+	chatID := int64(666)
+	s.NewChat(&tgbotapi.Chat{ID: chatID, Type: "private", UserName: "user666"})
+
+	c1 := model.Coupon{StoreID: storeID, Code: "CB1", Description: "Browser1", ExpiryDate: time.Now().Add(1 * time.Hour).Unix(), Link: "http://cb1.com"}
+	s.SaveCoupon(c1)
+
+	// 1. Get coupons (should see 1)
+	coupons, err := s.GetStoreCoupons(chatID, storeID, 10)
+	require.NoError(t, err)
+	assert.Len(t, coupons, 1)
+	assert.Equal(t, c1.Code, coupons[0].Code)
+
+	// 2. Mark as read
+	err = s.MarkAsRead(chatID, coupons)
+	require.NoError(t, err)
+
+	// 3. Get coupons again (should see 0)
+	coupons, err = s.GetStoreCoupons(chatID, storeID, 10)
+	require.NoError(t, err)
+	assert.Len(t, coupons, 0)
+}

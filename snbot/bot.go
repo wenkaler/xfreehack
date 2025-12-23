@@ -44,7 +44,7 @@ type Storage interface {
 	GetStoresWithCoupons(categoryID int) ([]model.Store, error)
 	GetStoresByCategory(categoryID int) ([]model.Store, error)
 	GetStore(storeID int) (*model.Store, error)
-	GetStoreCoupons(storeID int, count int64) ([]model.Coupon, error)
+	GetStoreCoupons(chatID int64, storeID int, count int64) ([]model.Coupon, error)
 	SetNotificationSchedule(chatID int64, schedule string) error
 	GetNotificationSchedule(chatID int64) (string, error)
 	GetChatsBySchedule(schedule string) ([]int64, error)
@@ -583,7 +583,7 @@ func (s *SNBot) printStoreCoupons(cb *tgbotapi.CallbackQuery, storeID int) {
 
 	store, _ := s.cfg.Storage.GetStore(storeID)
 	// Fetch coupons (default 5)
-	coupons, err := s.cfg.Storage.GetStoreCoupons(storeID, 5)
+	coupons, err := s.cfg.Storage.GetStoreCoupons(chatID, storeID, 5)
 	if err != nil {
 		s.Send(chatID, "Ошибка получения купонов")
 		return
@@ -623,9 +623,16 @@ func (s *SNBot) printStoreCoupons(cb *tgbotapi.CallbackQuery, storeID int) {
 		level.Error(s.cfg.Logger).Log("msg", "failed to mark as read", "err", err)
 	}
 
-	// 3. Refresh the Store List (Edit the original message)
-	// We need to change signature of sendCouponsBrowserStores to accept messageID for editing
-	s.sendCouponsBrowserStores(chatID, store.CategoryID, messageID)
+	// 3. Refresh the Store List
+	// User feedback: "After calling store, menu is not re-rendered (conveniently)".
+	// Old logic: Edit message. Result: Menu stays "above" the new coupons.
+	// New logic: Delete old menu message, Send NEW menu message at the bottom.
+
+	// Delete old message
+	s.bot.Request(tgbotapi.NewDeleteMessage(chatID, messageID))
+
+	// Send new menu (0 passed as editMessageID means NewMessage)
+	s.sendCouponsBrowserStores(chatID, store.CategoryID, 0)
 }
 
 func (s *SNBot) sendTimeMenu(chatID int64) {
