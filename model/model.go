@@ -44,14 +44,16 @@ type Subscription struct {
 }
 
 type Chat struct {
-	ID               int64     `db:"id"`
-	UserName         string    `db:"username"`
-	FirstName        string    `db:"first_name"`
-	LastName         string    `db:"last_name"`
-	Active           bool      `db:"active"`
-	TimezoneOffset   int       `db:"timezone_offset"`
-	NotificationHour int       `db:"notification_hour"`
-	CreatedAt        time.Time `db:"created_at"`
+	ID                   int64     `db:"id"`
+	Type                 string    `db:"type"`
+	UserName             string    `db:"username"`
+	FirstName            string    `db:"first_name"`
+	LastName             string    `db:"last_name"`
+	Active               bool      `db:"active"`
+	NotificationSchedule string    `db:"notification_schedule"`
+	TimezoneOffset       int       `db:"timezone_offset"`
+	NotificationHour     int       `db:"notification_hour"`
+	CreatedAt            time.Time `db:"created_at"`
 }
 
 type CollectionStats struct {
