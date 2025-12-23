@@ -58,3 +58,12 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     sent_at TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS relation_chat_coupons (
+    id SERIAL PRIMARY KEY,
+    coupon_id INTEGER REFERENCES coupons(id) ON DELETE CASCADE,
+    chat_id BIGINT REFERENCES chats(id) ON DELETE CASCADE,
+    status BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(coupon_id, chat_id)
+);

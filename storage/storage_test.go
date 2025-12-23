@@ -228,3 +228,78 @@ func TestStorage_NewChat(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5, off)
 }
+
+func TestStorage_Subscriptions(t *testing.T) {
+	logger := log.NewNopLogger()
+	s := &Storage{db: testDB, logger: logger}
+	_, err := testDB.Exec("TRUNCATE TABLE categories, stores, chats, subscriptions CASCADE")
+	require.NoError(t, err)
+
+	// Setup
+	catID, _ := s.SaveCategory(model.Category{Name: "CatSub", Slug: "catsub"})
+	storeID, _ := s.SaveStore(model.Store{Name: "StoreSub", Slug: "storesub", CategoryID: catID})
+	chat := &tgbotapi.Chat{ID: 999, Type: "private", UserName: "user999"}
+	s.NewChat(chat)
+
+	// Test Subscribe Category
+	err = s.SubscribeToCategory(999, catID)
+	require.NoError(t, err)
+
+	subs, err := s.GetSubscribedCategories(999)
+	require.NoError(t, err)
+	assert.Contains(t, subs, catID)
+
+	// Test Unsubscribe Category
+	err = s.UnsubscribeFromCategory(999, catID)
+	require.NoError(t, err)
+	subs, _ = s.GetSubscribedCategories(999)
+	assert.NotContains(t, subs, catID)
+
+	// Test Subscribe Store
+	err = s.SubscribeToStore(999, storeID)
+	require.NoError(t, err)
+
+	stores, err := s.GetSubscribedStores(999)
+	require.NoError(t, err)
+	assert.Contains(t, stores, storeID)
+}
+
+func TestStorage_CouponDeduplication(t *testing.T) {
+	logger := log.NewNopLogger()
+	s := &Storage{db: testDB, logger: logger}
+	_, err := testDB.Exec("TRUNCATE TABLE categories, stores, coupons, chats, relation_chat_coupons CASCADE")
+	require.NoError(t, err)
+
+	catID, _ := s.SaveCategory(model.Category{Name: "CatDedup", Slug: "catdedup"})
+	storeID, _ := s.SaveStore(model.Store{Name: "StoreDedup", Slug: "storededup", CategoryID: catID})
+	chatID := int64(888)
+	s.NewChat(&tgbotapi.Chat{ID: chatID, Type: "private", UserName: "user888"})
+
+	coupon := model.Coupon{
+		StoreID:     storeID,
+		Code:        "DEDUP1",
+		Description: "Dedup Test",
+		ExpiryDate:  time.Now().Add(24 * time.Hour).Unix(),
+		Link:        "http://dedup.com",
+	}
+	s.SaveCoupon(coupon)
+
+	// Get ID of saved coupon
+	m, _ := s.LoadCollect()
+	savedCoupon := m["http://dedup.com"]
+
+	// 1. Should get coupon initially
+	coupons, err := s.GetNotUseCouponCount(chatID, 10)
+	require.NoError(t, err)
+	assert.Len(t, coupons, 1)
+	assert.Equal(t, savedCoupon.ID, coupons[0].ID)
+
+	// 2. Mark as read
+	err = s.MarkAsRead(chatID, []model.Coupon{savedCoupon})
+	require.NoError(t, err)
+
+	// 3. Should NOT get coupon again
+	coupons, err = s.GetNotUseCouponCount(chatID, 10)
+	require.NoError(t, err)
+	assert.Len(t, coupons, 0, "Should not return marked-as-read coupons")
+}
