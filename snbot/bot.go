@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 const info = `Доброго времени суток, вас приветствует xFree Bot!
@@ -40,10 +40,16 @@ type Storage interface {
 	GetSubscribedStores(chatID int64) ([]int, error)
 	GetAllCategories() ([]model.Category, error)
 	GetAllStores() ([]model.Store, error)
+	GetStoresByCategory(categoryID int) ([]model.Store, error)
+	GetStore(storeID int) (*model.Store, error)
 	SetNotificationSchedule(chatID int64, schedule string) error
 	GetNotificationSchedule(chatID int64) (string, error)
 	GetChatsBySchedule(schedule string) ([]int64, error)
 	GetChat() ([]int64, error)
+
+	// Notifications
+	GetPendingNotifications() ([]model.Notification, error)
+	MarkNotificationSent(id int) error
 }
 
 type Config struct {
@@ -65,13 +71,20 @@ func New(cfg *Config) (*SNBot, error) {
 	if err != nil {
 		return nil, err
 	}
+	commands := []tgbotapi.BotCommand{
+		{Command: "start", Description: "Запустить бота 🚀"},
+		{Command: "print", Description: "Вывести купоны 🏷️"},
+		{Command: "settings", Description: "Настройки ⚙️"},
+	}
+	// Native SetMyCommands in v5
+	if _, err := bot.Request(tgbotapi.NewSetMyCommands(commands...)); err != nil {
+		level.Error(cfg.Logger).Log("msg", "Failed to set bot commands", "err", err)
+	}
+
 	level.Info(cfg.Logger).Log("msg", "Authorized on account", "bot-name", bot.Self.UserName)
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = cfg.UpdateTime
-	updates, err := bot.GetUpdatesChan(u)
-	if err != nil {
-		return nil, err
-	}
+	updates := bot.GetUpdatesChan(u)
 	return &SNBot{
 		cfg: cfg,
 		bot: bot,
@@ -189,7 +202,10 @@ func (s *SNBot) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case data == "settings_cats":
 		s.sendCategoriesMenu(chatID)
 	case data == "settings_stores":
-		s.sendStoresMenu(chatID)
+		s.sendStoresCategoriesMenu(chatID)
+	case strings.HasPrefix(data, "settings_stores_cat_"):
+		catID, _ := strconv.Atoi(strings.TrimPrefix(data, "settings_stores_cat_"))
+		s.sendStoresMenu(chatID, catID)
 	case strings.HasPrefix(data, "sub_cat_"):
 		id, _ := strconv.Atoi(strings.TrimPrefix(data, "sub_cat_"))
 		s.toggleCategorySubscription(chatID, id)
@@ -197,7 +213,7 @@ func (s *SNBot) handleCallback(cb *tgbotapi.CallbackQuery) {
 	case strings.HasPrefix(data, "sub_store_"):
 		id, _ := strconv.Atoi(strings.TrimPrefix(data, "sub_store_"))
 		s.toggleStoreSubscription(chatID, id)
-		s.sendStoresMenu(chatID) // refresh
+		// s.sendStoresMenu(chatID) // refresh handled inside toggleStoreSubscription
 	case data == "settings_time":
 		s.sendTimeMenu(chatID)
 	case strings.HasPrefix(data, "set_time_"):
@@ -207,7 +223,9 @@ func (s *SNBot) handleCallback(cb *tgbotapi.CallbackQuery) {
 	}
 
 	// Answer callback to stop loading animation
-	s.bot.AnswerCallbackQuery(tgbotapi.NewCallback(cb.ID, ""))
+	if _, err := s.bot.Request(tgbotapi.NewCallback(cb.ID, "")); err != nil {
+		level.Error(s.cfg.Logger).Log("msg", "failed to answer callback", "err", err)
+	}
 }
 
 func (s *SNBot) sendSettingsMenu(chatID int64) {
@@ -247,10 +265,11 @@ func (s *SNBot) sendCategoriesMenu(chatID int64) {
 
 	for i, cat := range cats {
 		label := cat.Name
+		// Inverted logic: Show action to take
 		if subMap[cat.ID] {
-			label = "✅ " + label
+			label = "❌ " + label // Already subbed -> Show Unsubscribe action
 		} else {
-			label = "❌ " + label
+			label = "✅ " + label // Not subbed -> Show Subscribe action
 		}
 		btn := tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("sub_cat_%d", cat.ID))
 		row = append(row, btn)
@@ -270,8 +289,38 @@ func (s *SNBot) sendCategoriesMenu(chatID int64) {
 	s.bot.Send(msg)
 }
 
-func (s *SNBot) sendStoresMenu(chatID int64) {
-	stores, err := s.cfg.Storage.GetAllStores()
+func (s *SNBot) sendStoresCategoriesMenu(chatID int64) {
+	// First level of store navigation: Select Category
+	cats, err := s.cfg.Storage.GetAllCategories()
+	if err != nil {
+		s.Send(chatID, "Ошибка получения категорий")
+		return
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+
+	for i, cat := range cats {
+		btn := tgbotapi.NewInlineKeyboardButtonData("📂 "+cat.Name, fmt.Sprintf("settings_stores_cat_%d", cat.ID))
+		row = append(row, btn)
+
+		if (i+1)%2 == 0 || i == len(cats)-1 {
+			rows = append(rows, row)
+			row = []tgbotapi.InlineKeyboardButton{}
+		}
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_main"),
+	))
+
+	msg := tgbotapi.NewMessage(chatID, "Выберите категорию магазинов:")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	s.bot.Send(msg)
+}
+
+func (s *SNBot) sendStoresMenu(chatID int64, categoryID int) {
+	stores, err := s.cfg.Storage.GetStoresByCategory(categoryID)
 	if err != nil {
 		s.Send(chatID, "Ошибка получения магазинов")
 		return
@@ -287,19 +336,15 @@ func (s *SNBot) sendStoresMenu(chatID int64) {
 		subMap[id] = true
 	}
 
-	// For stores, list might be long. Ideally pagination, but for now simple list.
-	// Limit to top 50 to avoid hitting limits? Or just show all if small.
-	// Let's assume < 100 stores for now.
-
 	var rows [][]tgbotapi.InlineKeyboardButton
 	var row []tgbotapi.InlineKeyboardButton
 
 	for i, st := range stores {
 		label := st.Name
 		if subMap[st.ID] {
-			label = "✅ " + label
+			label = "❌ " + label // Inverted: Action to Unsubscribe
 		} else {
-			label = "❌ " + label
+			label = "✅ " + label // Inverted: Action to Subscribe
 		}
 		btn := tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("sub_store_%d", st.ID))
 		row = append(row, btn)
@@ -311,7 +356,7 @@ func (s *SNBot) sendStoresMenu(chatID int64) {
 	}
 
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_main"),
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_stores"),
 	))
 
 	msg := tgbotapi.NewMessage(chatID, "Выберите магазины для подписки:")
@@ -348,6 +393,13 @@ func (s *SNBot) toggleStoreSubscription(chatID int64, storeID int) {
 		s.cfg.Storage.UnsubscribeFromStore(chatID, storeID)
 	} else {
 		s.cfg.Storage.SubscribeToStore(chatID, storeID)
+	}
+
+	// Refresh the menu
+	// Retrieve store to get CategoryID
+	store, err := s.cfg.Storage.GetStore(storeID)
+	if err == nil {
+		s.sendStoresMenu(chatID, store.CategoryID)
 	}
 }
 
@@ -388,13 +440,8 @@ func (s *SNBot) sendTimeMenu(chatID int64) {
 
 func (s *SNBot) Send(chatID int64, msg string) error {
 	level.Error(s.cfg.Logger).Log("msg", "try send", "chatID", chatID)
-	var numericKeyboard = tgbotapi.NewReplyKeyboard(
-		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("/print"),
-		),
-	)
 	m := tgbotapi.NewMessage(chatID, msg)
-	m.ReplyMarkup = numericKeyboard
+	m.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
 	_, err := s.bot.Send(m)
 	if err != nil {
 		if err.Error() == errBlockedByUser {

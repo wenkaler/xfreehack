@@ -33,7 +33,6 @@ go.work.sum
 # Config and Secrets
 .env
 .env.local
-.env.example
 config.yaml
 *.key
 *.pem
@@ -47,5 +46,9 @@ tmp/
 start.sh
 .agent
 
+cmd/gen_migration
+cmd/inspect_sqlite
+
 CHANGELOG.md
 changelog.md
+migration/migrate_users.sql

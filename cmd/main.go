@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/wenkaler/xfreehack/snbot"
 	"gopkg.in/yaml.v3"
@@ -128,6 +129,11 @@ func main() {
 		notifyTask(sn, s, logger, "18:00")
 	})
 
+	// 4. Check for system notifications every 1 minute
+	gocron.Every(1).Minutes().Do(func() {
+		checkNotifications(sn, s, logger)
+	})
+
 	cronCh := gocron.Start()
 
 	cl := make(chan os.Signal, 1)
@@ -164,4 +170,55 @@ func notifyTask(bot *snbot.SNBot, s *storage.Storage, logger kitlog.Logger, sche
 		}
 	}
 	level.Info(logger).Log("msg", "finished notification task", "schedule", schedule, "chats_count", len(chats))
+}
+
+func checkNotifications(bot *snbot.SNBot, s *storage.Storage, logger kitlog.Logger) {
+	nots, err := s.GetPendingNotifications()
+	if err != nil {
+		level.Error(logger).Log("msg", "failed to check notifications", "err", err)
+		return
+	}
+
+	if len(nots) == 0 {
+		return
+	}
+
+	level.Info(logger).Log("msg", "found pending notifications", "count", len(nots))
+
+	for _, n := range nots {
+		// Log start
+		level.Info(logger).Log("msg", "sending notification", "id", n.ID, "target", n.TargetSegment)
+
+		var chats []int64
+		// For now support 'all'
+		if n.TargetSegment == "all" || n.TargetSegment == "" {
+			chats, err = s.GetChat()
+		} else {
+			// specific segment logic (e.g. 'migrated' could be same as all for now or tracked elsewhere)
+			// fallback to all for safety or skip
+			level.Warn(logger).Log("msg", "unknown target segment, defaulting to all", "segment", n.TargetSegment)
+			chats, err = s.GetChat()
+		}
+
+		if err != nil {
+			level.Error(logger).Log("msg", "failed to get chats for notification", "err", err)
+			continue
+		}
+
+		successCount := 0
+		for _, chatID := range chats {
+			if err := bot.Send(chatID, n.Message); err != nil {
+				level.Error(logger).Log("msg", "failed to send notification", "chatID", chatID, "err", err)
+			} else {
+				successCount++
+			}
+			// Simple rate limiting
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		if err := s.MarkNotificationSent(n.ID); err != nil {
+			level.Error(logger).Log("msg", "failed to mark notification as sent", "id", n.ID, "err", err)
+		}
+		level.Info(logger).Log("msg", "finished sending notification", "id", n.ID, "sent_count", successCount)
+	}
 }

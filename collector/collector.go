@@ -110,14 +110,21 @@ func (c *Collector) parseCategories() ([]model.Category, error) {
 	}
 
 	var categories []model.Category
-	// Updated selector based on browser analysis: Look for links in the primary nav
-	doc.Find("ul.uk-nav.uk-nav-primary a").Each(func(i int, s *goquery.Selection) {
+	// Updated selector based on user feedback: .tm-toolbar a
+	doc.Find(".tm-toolbar a").Each(func(i int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if !exists || strings.HasPrefix(href, "http") || href == "/" || href == "#" {
 			return
 		}
 		// Basic filtering to avoid junk links
 		if len(href) < 2 {
+			return
+		}
+
+		// Validation by depth: Categories are top level "/knigi", Stores are deep "/knigi/store"
+		// Count slashes in trimmed path. "knigi" -> 0 slashes. "knigi/store" -> 1 slash.
+		trimmed := strings.Trim(href, "/")
+		if strings.Count(trimmed, "/") > 0 {
 			return
 		}
 
@@ -139,6 +146,26 @@ func (c *Collector) parseCategories() ([]model.Category, error) {
 	// If generic selector fails, try fallback or specific known classes
 	if len(categories) == 0 {
 		level.Warn(c.cfg.Logger).Log("msg", "no categories found with primary selector, trying fallback")
+		// Fallback to previous selector just in case
+		doc.Find("ul.uk-nav.uk-nav-primary a").Each(func(i int, s *goquery.Selection) {
+			href, exists := s.Attr("href")
+			if !exists {
+				return
+			}
+
+			// Apply the same strict filtering
+			trimmed := strings.Trim(href, "/")
+			if strings.Count(trimmed, "/") > 0 {
+				return
+			}
+
+			name := strings.TrimSpace(s.Text())
+			if name == "" {
+				return
+			}
+			slug := strings.TrimPrefix(href, "/")
+			categories = append(categories, model.Category{Name: name, Slug: slug})
+		})
 	}
 
 	// Remove duplicates
@@ -164,7 +191,7 @@ func (c *Collector) parseStores(cat model.Category) ([]model.Store, error) {
 	}
 
 	var stores []model.Store
-	// Updated selector based on browser analysis: .mwall-photo-link
+
 	doc.Find(".mwall-photo-link").Each(func(i int, s *goquery.Selection) {
 		href, exists := s.Attr("href")
 		if !exists {
@@ -174,6 +201,11 @@ func (c *Collector) parseStores(cat model.Category) ([]model.Store, error) {
 		// Check if it belongs to this category path to be safe
 		// Example href: /knigi/promokody-litres
 		if !strings.HasPrefix(href, "/"+cat.Slug+"/") {
+			return
+		}
+
+		trimmed := strings.Trim(href, "/")
+		if strings.Count(trimmed, "/") < 1 {
 			return
 		}
 
@@ -196,7 +228,7 @@ func (c *Collector) parseStores(cat model.Category) ([]model.Store, error) {
 		level.Debug(c.cfg.Logger).Log("msg", "found store candidate", "name", name, "href", href)
 
 		stores = append(stores, model.Store{
-			Name: name,
+			Name: strClean(name),
 			Slug: slug,
 			URL:  BaseURL + href,
 		})
@@ -214,6 +246,22 @@ func (c *Collector) parseStores(cat model.Category) ([]model.Store, error) {
 
 	level.Info(c.cfg.Logger).Log("msg", "parsed stores", "category", cat.Name, "count", len(res))
 	return res, nil
+}
+
+func strClean(s string) string {
+	s = strings.TrimSpace(s)
+	// Aggressive cleaning
+	s = strings.ReplaceAll(s, "Промокоды и купоны", "")
+	s = strings.ReplaceAll(s, "Промокоды", "")
+	s = strings.ReplaceAll(s, " купоны", "")
+
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	// Double space cleanup
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	return strings.TrimSpace(s)
 }
 
 func (c *Collector) parseCoupons(store model.Store) ([]model.Coupon, error) {

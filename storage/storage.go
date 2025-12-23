@@ -6,7 +6,7 @@ import (
 
 	"github.com/wenkaler/xfreehack/model"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/go-kit/kit/log"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -180,6 +180,21 @@ func (s *Storage) GetAllStores() ([]model.Store, error) {
 	return stores, err
 }
 
+func (s *Storage) GetStoresByCategory(categoryID int) ([]model.Store, error) {
+	var stores []model.Store
+	err := s.db.Select(&stores, `SELECT * FROM stores WHERE category_id = $1 ORDER BY name`, categoryID)
+	return stores, err
+}
+
+func (s *Storage) GetStore(storeID int) (*model.Store, error) {
+	var st model.Store
+	err := s.db.Get(&st, `SELECT * FROM stores WHERE id = $1`, storeID)
+	if err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
 func (s *Storage) GetNotUseCoupon(cid int64) ([]model.Coupon, error) {
 	return s.GetNotUseCouponCount(cid, 5)
 }
@@ -310,6 +325,17 @@ func (s *Storage) MarkAsRead(cid int64, rr []model.Coupon) error {
 func (s *Storage) GetChat() (a []int64, err error) {
 	err = s.db.Select(&a, `SELECT id FROM chats WHERE active = true`)
 	return
+}
+
+func (s *Storage) GetPendingNotifications() ([]model.Notification, error) {
+	var n []model.Notification
+	err := s.db.Select(&n, "SELECT id, message, target_segment, is_sent FROM notifications WHERE is_sent = false")
+	return n, err
+}
+
+func (s *Storage) MarkNotificationSent(id int) error {
+	_, err := s.db.Exec("UPDATE notifications SET is_sent = true, sent_at = NOW() WHERE id = $1", id)
+	return err
 }
 
 func (s *Storage) GetChatsBySchedule(schedule string) (a []int64, err error) {

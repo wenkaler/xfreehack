@@ -1,9 +1,12 @@
 package model
 
+import "time"
+
 type Notification struct {
-	ID      int64
-	Message string
-	Status  bool
+	ID            int    `db:"id"`
+	Message       string `db:"message"`
+	TargetSegment string `db:"target_segment"`
+	IsSent        bool   `db:"is_sent"`
 }
 
 type Category struct {
@@ -21,13 +24,14 @@ type Store struct {
 }
 
 type Coupon struct {
-	ID          int64  `db:"id"`
-	StoreID     int    `db:"store_id"`
-	Code        string `db:"code"`
-	Description string `db:"description"`
-	ExpiryDate  int64  `db:"expiry_date"`
-	Link        string `db:"link"`
-	IsExclusive bool   `db:"is_exclusive"`
+	ID          int64     `db:"id"`
+	StoreID     int       `db:"store_id"`
+	Code        string    `db:"code"`
+	Description string    `db:"description"`
+	ExpiryDate  int64     `db:"expiry_date"`
+	Link        string    `db:"link"`
+	IsExclusive bool      `db:"is_exclusive"`
+	CreatedAt   time.Time `db:"created_at"`
 }
 
 type Subscription struct {
