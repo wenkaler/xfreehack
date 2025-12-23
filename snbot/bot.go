@@ -14,11 +14,18 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-const info = `Доброго времени суток, вас приветствует xFree Bot!
-Предназначенный собирать купоны и постить их в этот чат каждый день в 18:00 по МСК.
-Купоны будут поступать по мере их нахождения. 
-Если вы хотите получить прямо сейчас те купоны которые имеются у бота можете отправить команду /print 5 (кол-во купонов по умолчанию 5).
-https://t.me/XFRebot - группа в которой можно задать вопросы по боту.`
+const info = `Привет! Я xFree Bot 🤖
+Я собираю промокоды и купоны для популярных магазинов.
+
+Что я умею:
+✅ Подписка на интересные вам категории и магазины.
+⏰ Уведомления в удобное для вас время.
+🔎 Просмотр актуальных купонов через меню.
+
+Нажмите /menu, чтобы настроить подписки и время уведомлений.
+Или /print, чтобы открыть браузер купонов.
+
+Есть вопросы? 👉 https://t.me/XFRebot`
 
 const errBlockedByUser = "Forbidden: bot was blocked by the user"
 
@@ -84,8 +91,8 @@ func New(cfg *Config) (*SNBot, error) {
 	}
 	commands := []tgbotapi.BotCommand{
 		{Command: "start", Description: "Запустить бота 🚀"},
-		{Command: "print", Description: "Вывести купоны 🏷️"},
-		{Command: "settings", Description: "Настройки ⚙️"},
+		{Command: "print", Description: "Браузер купонов 🏷️"},
+		{Command: "menu", Description: "Меню 📱"},
 		{Command: "donate", Description: "Поддержать автора ☕️"},
 	}
 	// Native SetMyCommands in v5
@@ -168,16 +175,13 @@ func (s *SNBot) read(message *tgbotapi.Message) error {
 		msg = info
 		s.Send(message.Chat.ID, msg)
 	case "print":
-		err := s.SendCoupons(message.Chat.ID, message.CommandArguments(), Command)
-		if err != nil {
-			return err
-		}
+		s.sendCouponsBrowser(message.Chat.ID)
 	case "stat":
 		err := s.SendStat(message.Chat.ID, message.CommandArguments())
 		if err != nil {
 			return err
 		}
-	case "settings":
+	case "menu":
 		s.sendSettingsMenu(message.Chat.ID)
 	case "donate":
 		s.sendDonate(message.Chat.ID)
@@ -289,7 +293,7 @@ func (s *SNBot) handleCallback(cb *tgbotapi.CallbackQuery) {
 }
 
 func (s *SNBot) sendSettingsMenu(chatID int64) {
-	msg := tgbotapi.NewMessage(chatID, "⚙️ Настройки бота")
+	msg := tgbotapi.NewMessage(chatID, "📱 Меню")
 	kbd := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⭐️ Мои подписки", "settings_my_subs"),

@@ -85,3 +85,5 @@
 - [x] Fix: Browser shows read coupons <!-- id: 87 -->
     - [x] Test: Reproduce issue <!-- id: 88 -->
     - [x] Fix: Refactor GetStoreCoupons <!-- id: 89 -->
+- [x] UX: Update /print command <!-- id: 90 -->
+    - [x] Change /print to open Coupon Browser <!-- id: 91 -->
