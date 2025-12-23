@@ -381,6 +381,22 @@ func (s *Storage) CountNotUseCoupon(cid int64) (uint64, error) {
 	return cnt, nil
 }
 
+func (s *Storage) CountNotUseCouponByStore(chatID int64, storeID int) (int, error) {
+	var cnt int
+	var t = time.Now().AddDate(0, 0, -1).Unix()
+	// Count coupons for this store that are valid AND not marked as read (in relation_chat_coupons with status=true)
+	// Note: status=FALSE or NULL means unread. status=TRUE means read.
+	query := `
+		SELECT count(c.id)
+		FROM coupons c
+		LEFT JOIN relation_chat_coupons rcc ON c.id = rcc.coupon_id AND rcc.chat_id = $1
+		WHERE c.store_id = $2 AND c.expiry_date > $3
+		  AND (rcc.status = FALSE OR rcc.status IS NULL)
+	`
+	err := s.db.Get(&cnt, query, chatID, storeID, t)
+	return cnt, err
+}
+
 func (s *Storage) MarkAsRead(cid int64, rr []model.Coupon) error {
 	for _, r := range rr {
 		_, err := s.db.Exec(`

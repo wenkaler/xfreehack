@@ -57,7 +57,9 @@ type Storage interface {
 
 	// Notifications
 	GetPendingNotifications() ([]model.Notification, error)
+
 	MarkNotificationSent(id int) error
+	CountNotUseCouponByStore(chatID int64, storeID int) (int, error)
 }
 
 type Config struct {
@@ -251,10 +253,10 @@ func (s *SNBot) handleCallback(cb *tgbotapi.CallbackQuery) {
 		s.sendCouponsBrowser(chatID)
 	case strings.HasPrefix(data, "browser_cat_"):
 		catID, _ := strconv.Atoi(strings.TrimPrefix(data, "browser_cat_"))
-		s.sendCouponsBrowserStores(chatID, catID)
+		s.sendCouponsBrowserStores(chatID, catID, 0) // 0 means new message
 	case strings.HasPrefix(data, "browser_print_store_"):
 		storeID, _ := strconv.Atoi(strings.TrimPrefix(data, "browser_print_store_"))
-		s.printStoreCoupons(chatID, storeID)
+		s.printStoreCoupons(cb, storeID) // Pass full callback query
 
 	// --- Time Settings ---
 	case data == "settings_time":
@@ -515,15 +517,39 @@ func (s *SNBot) sendCouponsBrowser(chatID int64) {
 	s.bot.Send(msg)
 }
 
-func (s *SNBot) sendCouponsBrowserStores(chatID int64, catID int) {
-	stores, _ := s.cfg.Storage.GetStoresWithCoupons(catID)
+func (s *SNBot) sendCouponsBrowserStores(chatID int64, catID int, editMessageID int) {
+	// Logic: Get stores, BUT only those with coupons that are NOT read by this user?
+	// The current GetStoresWithCoupons does NOT filter by "read by user". It just checks expiry.
+	// We need a method that respects "unread by user".
+	// However, user said "If coupons were shown we don't show them to the user anymore".
+	// So we need GetStoresWithUnreadCoupons(categoryID, chatID).
+	// Existing GetStoresWithCoupons is generic.
+	// Let's modify GetStoresWithCoupons in storage or create a new one?
+	// For now, let's use what we have, but we really should filter.
+	// The User said: "If coupons were shown we don't show them to the user anymore." -> This implies the LIST should likely change counts.
+	// Since we marked as read in printStoreCoupons, we need GetStoresWithCoupons to be user-aware or have a new method.
+	// Let's assume for this step we update the signature first, and then I will update Storage to be user-aware.
+
+	stores, _ := s.cfg.Storage.GetStoresWithCoupons(catID) // This needs update ideally
+
+	// Better: We need to filter stores here or in SQL.
+	// Let's leave SQL for next step and just do UI logic here.
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	var row []tgbotapi.InlineKeyboardButton
 
 	count := 0
 	for _, st := range stores {
-		btn := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("🏪 %s (%d)", st.Name, st.Count), fmt.Sprintf("browser_print_store_%d", st.ID))
+		// We need to get accurate count for THIS user ideally.
+		// If we use static count, it won't decrease.
+		// Let's check coupon count for this user?
+		// expensive loop?
+		cnt, _ := s.cfg.Storage.CountNotUseCouponByStore(chatID, st.ID)
+		if cnt == 0 {
+			continue
+		}
+
+		btn := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("🏪 %s (%d)", st.Name, cnt), fmt.Sprintf("browser_print_store_%d", st.ID))
 		row = append(row, btn)
 		count++
 		if count%2 == 0 {
@@ -539,21 +565,34 @@ func (s *SNBot) sendCouponsBrowserStores(chatID int64, catID int) {
 		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "browser_main"),
 	))
 
-	msg := tgbotapi.NewMessage(chatID, "Выберите магазин для просмотра купонов:")
-	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
-	s.bot.Send(msg)
+	kbd := tgbotapi.NewInlineKeyboardMarkup(rows...)
+
+	if editMessageID > 0 {
+		msg := tgbotapi.NewEditMessageTextAndMarkup(chatID, editMessageID, "Выберите магазин для просмотра купонов:", kbd)
+		s.bot.Send(msg)
+	} else {
+		msg := tgbotapi.NewMessage(chatID, "Выберите магазин для просмотра купонов:")
+		msg.ReplyMarkup = kbd
+		s.bot.Send(msg)
+	}
 }
 
-func (s *SNBot) printStoreCoupons(chatID int64, storeID int) {
+func (s *SNBot) printStoreCoupons(cb *tgbotapi.CallbackQuery, storeID int) {
+	chatID := cb.Message.Chat.ID
+	messageID := cb.Message.MessageID
+
 	store, _ := s.cfg.Storage.GetStore(storeID)
-	// Default 5 coupons or all? Let's show 5.
+	// Fetch coupons (default 5)
 	coupons, err := s.cfg.Storage.GetStoreCoupons(storeID, 5)
 	if err != nil {
 		s.Send(chatID, "Ошибка получения купонов")
 		return
 	}
 	if len(coupons) == 0 {
-		s.Send(chatID, "Купоны не найдены")
+		// Answer callback instead of sending message
+		s.bot.Request(tgbotapi.NewCallbackWithAlert(cb.ID, "Купоны не найдены"))
+		// Refresh menu to remove empty store if needed
+		s.sendCouponsBrowserStores(chatID, store.CategoryID, messageID) // Pass messageID to Edit
 		return
 	}
 
@@ -572,17 +611,21 @@ func (s *SNBot) printStoreCoupons(chatID int64, storeID int) {
 		msg += fmt.Sprintf("🔗 [Перейти к скидке](%s)\n\n", rec.Link)
 	}
 
-	// Mark as read? Maybe. For now just show.
+	// 1. Send coupons as a new message (without buttons, or maybe just a delete button?)
+	// User said "don't fall into menu with back button", implies they just want the content.
 	m := tgbotapi.NewMessage(chatID, msg)
 	m.ParseMode = "Markdown"
-	// Keep the browser menu open?
-	kbd := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔙 К магазинам", fmt.Sprintf("browser_cat_%d", store.CategoryID)),
-		),
-	)
-	m.ReplyMarkup = kbd
 	s.bot.Send(m)
+
+	// 2. Mark as read
+	err = s.cfg.Storage.MarkAsRead(chatID, coupons)
+	if err != nil {
+		level.Error(s.cfg.Logger).Log("msg", "failed to mark as read", "err", err)
+	}
+
+	// 3. Refresh the Store List (Edit the original message)
+	// We need to change signature of sendCouponsBrowserStores to accept messageID for editing
+	s.sendCouponsBrowserStores(chatID, store.CategoryID, messageID)
 }
 
 func (s *SNBot) sendTimeMenu(chatID int64) {

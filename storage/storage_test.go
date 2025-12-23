@@ -303,3 +303,37 @@ func TestStorage_CouponDeduplication(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, coupons, 0, "Should not return marked-as-read coupons")
 }
+
+func TestStorage_CountNotUseCouponByStore(t *testing.T) {
+	logger := log.NewNopLogger()
+	s := &Storage{db: testDB, logger: logger}
+	_, err := testDB.Exec("TRUNCATE TABLE categories, stores, coupons, chats, relation_chat_coupons CASCADE")
+	require.NoError(t, err)
+
+	catID, _ := s.SaveCategory(model.Category{Name: "CatCnt", Slug: "catcnt"})
+	storeID, _ := s.SaveStore(model.Store{Name: "StoreCnt", Slug: "storecnt", CategoryID: catID})
+	chatID := int64(777)
+	s.NewChat(&tgbotapi.Chat{ID: chatID, Type: "private", UserName: "user777"})
+
+	// Save 2 coupons
+	c1 := model.Coupon{StoreID: storeID, Code: "C1", Description: "D1", ExpiryDate: time.Now().Add(1 * time.Hour).Unix(), Link: "http://c1.com"}
+	c2 := model.Coupon{StoreID: storeID, Code: "C2", Description: "D2", ExpiryDate: time.Now().Add(1 * time.Hour).Unix(), Link: "http://c2.com"}
+	s.SaveCoupon(c1)
+	s.SaveCoupon(c2)
+
+	// Verify count is 2
+	cnt, err := s.CountNotUseCouponByStore(chatID, storeID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, cnt)
+
+	// Mark 1 as read
+	// Need ID
+	all, _ := s.GetNotUseCouponCount(chatID, 10)
+	first := all[0]
+	s.MarkAsRead(chatID, []model.Coupon{first})
+
+	// Verify count is 1
+	cnt, err = s.CountNotUseCouponByStore(chatID, storeID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cnt)
+}
