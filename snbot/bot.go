@@ -48,6 +48,11 @@ type Storage interface {
 	SetNotificationSchedule(chatID int64, schedule string) error
 	GetNotificationSchedule(chatID int64) (string, error)
 	GetChatsBySchedule(schedule string) ([]int64, error)
+	GetChatsByHour(utcHour int) ([]int64, error)          // New
+	SetUserTimezone(chatID int64, offset int) error       // New
+	SetUserNotificationHour(chatID int64, hour int) error // New
+	GetUserTimezone(chatID int64) (int, error)            // New (offset)
+	GetUserNotificationHour(chatID int64) (int, error)    // New
 	GetChat() ([]int64, error)
 
 	// Notifications
@@ -251,10 +256,18 @@ func (s *SNBot) handleCallback(cb *tgbotapi.CallbackQuery) {
 	// --- Time Settings ---
 	case data == "settings_time":
 		s.sendTimeMenu(chatID)
-	case strings.HasPrefix(data, "set_time_"):
-		schedule := strings.TrimPrefix(data, "set_time_")
-		s.cfg.Storage.SetNotificationSchedule(chatID, schedule)
-		s.sendTimeMenu(chatID) // refresh
+	case data == "time_set_timezone":
+		s.sendTimezoneMenu(chatID)
+	case strings.HasPrefix(data, "set_tz_"):
+		tz, _ := strconv.Atoi(strings.TrimPrefix(data, "set_tz_"))
+		s.cfg.Storage.SetUserTimezone(chatID, tz)
+		s.sendTimeMenu(chatID)
+	case data == "time_set_hour":
+		s.sendHourMenu(chatID)
+	case strings.HasPrefix(data, "set_hour_"):
+		hour, _ := strconv.Atoi(strings.TrimPrefix(data, "set_hour_"))
+		s.cfg.Storage.SetUserNotificationHour(chatID, hour)
+		s.sendTimeMenu(chatID)
 	}
 
 	// Answer callback to stop loading animation
@@ -563,37 +576,80 @@ func (s *SNBot) printStoreCoupons(chatID int64, storeID int) {
 }
 
 func (s *SNBot) sendTimeMenu(chatID int64) {
-	sched, err := s.cfg.Storage.GetNotificationSchedule(chatID)
-	if err != nil {
-		s.Send(chatID, "Ошибка получения настроек")
-		return
-	}
+	tz, _ := s.cfg.Storage.GetUserTimezone(chatID)
+	hour, _ := s.cfg.Storage.GetUserNotificationHour(chatID)
 
-	labelImm := "Сразу при поступлении"
-	label18 := "Каждый день в 18:00"
-
-	if sched == "immediate" {
-		labelImm = "✅ " + labelImm
-		label18 = "❌ " + label18
-	} else {
-		labelImm = "❌ " + labelImm
-		label18 = "✅ " + label18
-	}
+	// Display current settings
+	// Timezone e.g. UTC+3
+	// Hour e.g. 18:00
+	msgText := fmt.Sprintf("⏰ Настройки уведомлений\n\n🌍 Ваш часовой пояс: UTC+%d\n🕒 Час получения: %02d:00 (по вашему времени)", tz, hour)
 
 	kbd := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(labelImm, "set_time_immediate"),
+			tgbotapi.NewInlineKeyboardButtonData("🌍 Изменить часовой пояс", "time_set_timezone"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(label18, "set_time_18:00"),
+			tgbotapi.NewInlineKeyboardButtonData("🕒 Изменить время", "time_set_hour"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_main"),
 		),
 	)
 
-	msg := tgbotapi.NewMessage(chatID, "Выберите режим получения уведомлений:")
+	msg := tgbotapi.NewMessage(chatID, msgText)
 	msg.ReplyMarkup = kbd
+	s.bot.Send(msg)
+}
+
+func (s *SNBot) sendTimezoneMenu(chatID int64) {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+
+	// Range UTC+2 to UTC+12
+	for i := 2; i <= 12; i++ {
+		btn := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("UTC+%d", i), fmt.Sprintf("set_tz_%d", i))
+		row = append(row, btn)
+		if len(row) == 3 {
+			rows = append(rows, row)
+			row = []tgbotapi.InlineKeyboardButton{}
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_time"),
+	))
+
+	msg := tgbotapi.NewMessage(chatID, "Выберите ваш часовой пояс (например, Москва = UTC+3):")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	s.bot.Send(msg)
+}
+
+func (s *SNBot) sendHourMenu(chatID int64) {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+
+	// Range 00 to 23
+	for i := 0; i < 24; i++ {
+		btn := tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("%02d:00", i), fmt.Sprintf("set_hour_%d", i))
+		row = append(row, btn)
+		if len(row) == 4 {
+			rows = append(rows, row)
+			row = []tgbotapi.InlineKeyboardButton{}
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "settings_time"),
+	))
+
+	msg := tgbotapi.NewMessage(chatID, "Выберите час получения уведомлений (по вашему времени):")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	s.bot.Send(msg)
 }
 

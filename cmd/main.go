@@ -119,17 +119,14 @@ func main() {
 		collectTask(c, logger)
 	})
 
-	// 2. Notify users with 'immediate' schedule every 15 minutes (after collection)
-	gocron.Every(15).Minutes().Do(func() {
-		notifyTask(sn, s, logger, "immediate")
+	// 2. Notify users based on their timezone and preferred hour (runs every 1 hour)
+	// We want to run this at the top of the hour. Gocron starts immediately.
+	// For better precision we could wait until next hour start, but for now simple interval.
+	gocron.Every(1).Hours().Do(func() {
+		notifyHourly(sn, s, logger)
 	})
 
-	// 3. Notify users with '18:00' schedule daily at configured time
-	gocron.Every(1).Days().At(cfg.TimeToSend).Do(func() {
-		notifyTask(sn, s, logger, "18:00")
-	})
-
-	// 4. Check for system notifications every 1 minute
+	// 3. Check for system notifications every 1 minute
 	gocron.Every(1).Minutes().Do(func() {
 		checkNotifications(sn, s, logger)
 	})
@@ -153,23 +150,33 @@ func collectTask(c *collector.Collector, logger kitlog.Logger) {
 	}
 }
 
-func notifyTask(bot *snbot.SNBot, s *storage.Storage, logger kitlog.Logger, schedule string) {
-	level.Info(logger).Log("msg", "starting notification task", "schedule", schedule)
+func notifyHourly(bot *snbot.SNBot, s *storage.Storage, logger kitlog.Logger) {
+	utcHour := time.Now().UTC().Hour()
+	level.Info(logger).Log("msg", "starting hourly notification task", "utc_hour", utcHour)
 
-	chats, err := s.GetChatsBySchedule(schedule)
+	chats, err := s.GetChatsByHour(utcHour)
 	if err != nil {
-		level.Error(logger).Log("msg", "failed get chats", "err", err)
+		level.Error(logger).Log("msg", "failed get chats for hourly notification", "err", err)
 		return
 	}
 
+	if len(chats) == 0 {
+		level.Info(logger).Log("msg", "no users to notify this hour")
+		return
+	}
+
+	joinedChats := 0
 	for _, id := range chats {
 		err := bot.SendCoupons(id, "", snbot.Daily)
 		if err != nil {
 			level.Error(logger).Log("msg", "failed send coupons", "chatID", id, "err", err)
 			continue
 		}
+		joinedChats++
+		// Simple rate limiting
+		time.Sleep(50 * time.Millisecond)
 	}
-	level.Info(logger).Log("msg", "finished notification task", "schedule", schedule, "chats_count", len(chats))
+	level.Info(logger).Log("msg", "finished hourly notification task", "utc_hour", utcHour, "processed_chats", joinedChats)
 }
 
 func checkNotifications(bot *snbot.SNBot, s *storage.Storage, logger kitlog.Logger) {

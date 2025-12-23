@@ -111,13 +111,41 @@ func (s *Storage) SetNotificationSchedule(chatID int64, schedule string) error {
 }
 
 func (s *Storage) GetNotificationSchedule(chatID int64) (string, error) {
-	var schedule string
-	err := s.db.Get(&schedule, `SELECT notification_schedule FROM chats WHERE id = $1`, chatID)
-	// Default to 18:00 if null or empty (though default in DB is '18:00')
-	if schedule == "" {
-		return "18:00", nil
-	}
-	return schedule, err
+	var sched string
+	err := s.db.Get(&sched, `SELECT notification_schedule FROM chats WHERE id = $1`, chatID)
+	return sched, err
+}
+
+func (s *Storage) GetChatsByHour(utcHour int) ([]int64, error) {
+	var chats []int64
+	// Logic: We want users where (utcHour + timezone_offset) % 24 == notification_hour
+	// PostgreSQL: MOD((utcHour + timezone_offset + 24), 24) = notification_hour
+	// The +24 is to handle negative offsets correctly if modulo in DB behaves differently (though Postgres % is usually fine but +24 ensures positivity)
+	query := `SELECT id FROM chats WHERE active = TRUE AND MOD(($1 + timezone_offset + 24), 24) = notification_hour`
+	err := s.db.Select(&chats, query, utcHour)
+	return chats, err
+}
+
+func (s *Storage) SetUserTimezone(chatID int64, offset int) error {
+	_, err := s.db.Exec(`UPDATE chats SET timezone_offset = $1 WHERE id = $2`, offset, chatID)
+	return err
+}
+
+func (s *Storage) SetUserNotificationHour(chatID int64, hour int) error {
+	_, err := s.db.Exec(`UPDATE chats SET notification_hour = $1 WHERE id = $2`, hour, chatID)
+	return err
+}
+
+func (s *Storage) GetUserTimezone(chatID int64) (int, error) {
+	var off int
+	err := s.db.Get(&off, `SELECT timezone_offset FROM chats WHERE id = $1`, chatID)
+	return off, err
+}
+
+func (s *Storage) GetUserNotificationHour(chatID int64) (int, error) {
+	var h int
+	err := s.db.Get(&h, `SELECT notification_hour FROM chats WHERE id = $1`, chatID)
+	return h, err
 }
 
 // SubscribeToCategory subscribes a user to a category

@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS chats (
     last_name VARCHAR(255),
     active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    notification_schedule VARCHAR(20) DEFAULT '18:00'
+    notification_schedule VARCHAR(20) DEFAULT '18:00', -- Legacy, can be removed later
+    timezone_offset INTEGER DEFAULT 3,
+    notification_hour INTEGER DEFAULT 18
 );
 
 CREATE TABLE IF NOT EXISTS subscriptions (
