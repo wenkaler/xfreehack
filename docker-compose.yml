@@ -30,6 +30,8 @@ services:
       DB_SSL_MODE: disable
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
       ACCESS_TOKEN: ${ACCESS_TOKEN}
+    volumes:
+      - ./config.yaml:/app/config.yaml
     restart: always
 
 volumes:

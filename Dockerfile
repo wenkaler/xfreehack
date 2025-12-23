@@ -17,7 +17,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 FROM alpine:3.18
 WORKDIR /app
 COPY --from=build /app/xfree /app/xfree
-COPY --from=build /app/config.yaml /app/config.yaml
+
 # Copy migrations if needed, or mount them
 COPY --from=build /app/migration /app/migration
 
