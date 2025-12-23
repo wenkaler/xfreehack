@@ -42,3 +42,14 @@ type Subscription struct {
 	CategoryID *int  `db:"category_id"`
 	StoreID    *int  `db:"store_id"`
 }
+
+type Chat struct {
+	ID               int64     `db:"id"`
+	UserName         string    `db:"username"`
+	FirstName        string    `db:"first_name"`
+	LastName         string    `db:"last_name"`
+	Active           bool      `db:"active"`
+	TimezoneOffset   int       `db:"timezone_offset"`
+	NotificationHour int       `db:"notification_hour"`
+	CreatedAt        time.Time `db:"created_at"`
+}

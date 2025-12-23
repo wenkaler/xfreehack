@@ -1,0 +1,230 @@
+package storage
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"testing"
+	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/wenkaler/xfreehack/model"
+
+	"github.com/go-kit/kit/log"
+	"github.com/jmoiron/sqlx"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+var (
+	testDB *sqlx.DB
+)
+
+func TestMain(m *testing.M) {
+	ctx := context.Background()
+
+	dbName := "users"
+	dbUser := "user"
+	dbPassword := "password"
+
+	postgresContainer, err := postgres.Run(ctx,
+		"postgres:15-alpine",
+		postgres.WithDatabase(dbName),
+		postgres.WithUsername(dbUser),
+		postgres.WithPassword(dbPassword),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(5*time.Second)),
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to start container: %s\n", err)
+		os.Exit(1)
+	}
+
+	defer func() {
+		if err := postgresContainer.Terminate(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to terminate container: %s\n", err)
+		}
+	}()
+
+	connStr, err := postgresContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to get connection string: %s\n", err)
+		os.Exit(1)
+	}
+
+	testDB, err = sqlx.Open("pgx", connStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to open db connection: %s\n", err)
+		os.Exit(1)
+	}
+
+	// Apply Migrations
+	if err := applyMigrations(testDB); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to apply migrations: %s\n", err)
+		os.Exit(1)
+	}
+
+	os.Exit(m.Run())
+}
+
+func applyMigrations(db *sqlx.DB) error {
+	// Read init.sql
+	initSQL, err := os.ReadFile("../migration/init.sql")
+	if err != nil {
+		return fmt.Errorf("failed to read init.sql: %w", err)
+	}
+	// Read alter_chats.sql
+	alterSQL, err := os.ReadFile("../migration/alter_chats.sql")
+	if err != nil {
+		return fmt.Errorf("failed to read alter_chats.sql: %w", err)
+	}
+
+	// Apply init
+	_, err = db.Exec(string(initSQL))
+	if err != nil {
+		return fmt.Errorf("failed to exec init.sql: %w", err)
+	}
+	// Apply alter
+	_, err = db.Exec(string(alterSQL))
+	if err != nil {
+		return fmt.Errorf("failed to exec alter_chats.sql: %w", err)
+	}
+
+	return nil
+}
+
+func TestStorage_Categories(t *testing.T) {
+	logger := log.NewNopLogger()
+	s := &Storage{db: testDB, logger: logger}
+
+	// Clean tables
+	_, err := testDB.Exec("TRUNCATE TABLE categories CASCADE")
+	require.NoError(t, err)
+
+	cat := model.Category{
+		Name: "Test Category",
+		Slug: "test-category",
+	}
+
+	// Test Save
+	id, err := s.SaveCategory(cat)
+	require.NoError(t, err)
+	assert.NotZero(t, id)
+
+	// Test Get All
+	cats, err := s.GetAllCategories()
+	require.NoError(t, err)
+	assert.Len(t, cats, 1)
+	assert.Equal(t, "Test Category", cats[0].Name)
+	assert.Equal(t, "test-category", cats[0].Slug)
+
+	// Test Upsert (Update name)
+	cat.Name = "Updated Name"
+	id2, err := s.SaveCategory(cat)
+	require.NoError(t, err)
+	assert.Equal(t, id, id2) // Should be same ID
+
+	cats, err = s.GetAllCategories()
+	require.NoError(t, err)
+	assert.Equal(t, "Updated Name", cats[0].Name)
+}
+
+func TestStorage_Stores(t *testing.T) {
+	logger := log.NewNopLogger()
+	s := &Storage{db: testDB, logger: logger}
+	_, err := testDB.Exec("TRUNCATE TABLE categories, stores CASCADE")
+	require.NoError(t, err)
+
+	// Create Category
+	catID, err := s.SaveCategory(model.Category{Name: "Cat1", Slug: "cat1"})
+	require.NoError(t, err)
+
+	// Test Save Store
+	store := model.Store{
+		Name:       "Store 1",
+		Slug:       "store-1",
+		URL:        "http://store1.com",
+		CategoryID: catID,
+	}
+	id, err := s.SaveStore(store)
+	require.NoError(t, err)
+	assert.NotZero(t, id)
+
+	// Test GetStore
+	fetchedStore, err := s.GetStore(id)
+	require.NoError(t, err)
+	assert.Equal(t, "Store 1", fetchedStore.Name)
+	assert.Equal(t, catID, fetchedStore.CategoryID)
+
+	// Test GetStoresByCategory
+	stores, err := s.GetStoresByCategory(catID)
+	require.NoError(t, err)
+	assert.Len(t, stores, 1)
+}
+
+func TestStorage_Coupons(t *testing.T) {
+	logger := log.NewNopLogger()
+	s := &Storage{db: testDB, logger: logger}
+	_, err := testDB.Exec("TRUNCATE TABLE categories, stores, coupons CASCADE")
+	require.NoError(t, err)
+
+	catID, _ := s.SaveCategory(model.Category{Name: "Cat1", Slug: "cat1"})
+	storeID, _ := s.SaveStore(model.Store{Name: "Store1", Slug: "store1", CategoryID: catID})
+
+	coupon := model.Coupon{
+		StoreID:     storeID,
+		Code:        "SALE10",
+		Description: "10% Off",
+		ExpiryDate:  time.Now().Add(24 * time.Hour).Unix(),
+		Link:        "http://link.com",
+		IsExclusive: false,
+	}
+
+	// Test Save Coupon
+	err = s.SaveCoupon(coupon)
+	require.NoError(t, err)
+
+	// Test LoadCollect
+	m, err := s.LoadCollect()
+	require.NoError(t, err)
+	assert.Contains(t, m, "http://link.com")
+	assert.Equal(t, "SALE10", m["http://link.com"].Code)
+}
+
+func TestStorage_NewChat(t *testing.T) {
+	logger := log.NewNopLogger()
+	s := &Storage{db: testDB, logger: logger}
+	_, err := testDB.Exec("TRUNCATE TABLE chats CASCADE")
+	require.NoError(t, err)
+
+	chat := &tgbotapi.Chat{
+		ID:        12345,
+		Type:      "private",
+		UserName:  "testuser",
+		FirstName: "Test",
+		LastName:  "User",
+	}
+
+	err = s.NewChat(chat)
+	require.NoError(t, err)
+
+	// Verify defaults
+	var offset, hour int
+	err = testDB.QueryRow("SELECT timezone_offset, notification_hour FROM chats WHERE id = $1", 12345).Scan(&offset, &hour)
+	require.NoError(t, err)
+	assert.Equal(t, 3, offset)
+	assert.Equal(t, 18, hour)
+
+	// Test Update Timezone
+	err = s.SetUserTimezone(12345, 5)
+	require.NoError(t, err)
+
+	off, err := s.GetUserTimezone(12345)
+	require.NoError(t, err)
+	assert.Equal(t, 5, off)
+}

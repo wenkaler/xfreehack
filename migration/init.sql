@@ -1,11 +1,14 @@
 CREATE TABLE IF NOT EXISTS categories (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL UNIQUE
+    name VARCHAR(255) NOT NULL UNIQUE,
+    slug VARCHAR(255) UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS stores (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL UNIQUE,
+    slug VARCHAR(255) UNIQUE,
+    url TEXT,
     category_id INTEGER REFERENCES categories(id) ON DELETE CASCADE
 );
 
@@ -14,15 +17,17 @@ CREATE TABLE IF NOT EXISTS coupons (
     store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
     code VARCHAR(100),
     description TEXT,
-    expires VARCHAR(50),
-    link TEXT,
+    expiry_date BIGINT,
+    link TEXT NOT NULL UNIQUE,
+    is_exclusive BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(store_id, code, description)
 );
 
 CREATE TABLE IF NOT EXISTS chats (
     id BIGINT PRIMARY KEY,
-    username VARCHAR(255),
+    type VARCHAR(50),
+    user_name VARCHAR(255),
     first_name VARCHAR(255),
     last_name VARCHAR(255),
     active BOOLEAN DEFAULT TRUE,
